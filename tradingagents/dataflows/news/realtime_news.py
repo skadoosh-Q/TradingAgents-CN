@@ -330,7 +330,7 @@ class RealtimeNewsAggregator:
                     em_start_time = datetime.now(ZoneInfo(get_timezone_name()))
                     news_df = provider.get_stock_news_sync(symbol=clean_ticker)
 
-                    if not news_df.empty:
+                    if news_df is not None and not news_df.empty:
                         logger.info(f"[中文财经新闻] 东方财富返回 {len(news_df)} 条新闻数据，开始处理")
                         processed_count = 0
                         skipped_count = 0
@@ -771,7 +771,7 @@ def get_realtime_stock_news(ticker: str, curr_date: str, hours_back: int = 6) ->
             else:
                 logger.info(f"[新闻分析] 东方财富API返回数据: {news_df}")
 
-            if not news_df.empty:
+            if news_df is not None and not news_df.empty:
                 # 构建简单的新闻报告
                 news_count = len(news_df)
                 logger.info(f"[新闻分析] 成功获取 {news_count} 条东方财富新闻，耗时 {time_taken:.2f} 秒")
@@ -874,7 +874,7 @@ def get_realtime_stock_news(ticker: str, curr_date: str, hours_back: int = 6) ->
             end_time = datetime.now(ZoneInfo(get_timezone_name()))
             time_taken = (end_time - start_time).total_seconds()
 
-            if not news_df.empty:
+            if news_df is not None and not news_df.empty:
                 # 构建简单的新闻报告
                 news_count = len(news_df)
                 logger.info(f"[新闻分析] 成功获取 {news_count} 条东方财富港股新闻，耗时 {time_taken:.2f} 秒")

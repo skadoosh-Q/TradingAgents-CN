@@ -1111,6 +1111,8 @@ class AKShareProvider(BaseStockDataProvider):
         """
         获取股票新闻（同步版本，返回原始 DataFrame）
 
+        优先使用 AKShare 的 stock_news_em 接口，失败时自动切换到直接调用东方财富 API
+
         Args:
             symbol: 股票代码，为None时获取市场新闻
             limit: 返回数量限制
@@ -1133,10 +1135,11 @@ class AKShareProvider(BaseStockDataProvider):
                 # 标准化股票代码
                 symbol_6 = symbol.zfill(6)
 
-                # 获取东方财富个股新闻，添加重试机制
-                max_retries = 3
+                # 方案1：尝试使用 AKShare 的 stock_news_em 接口
+                max_retries = 2  # 减少重试次数以加快切换到备用方案
                 retry_delay = 1  # 秒
                 news_df = None
+                akshare_failed = False
 
                 for attempt in range(max_retries):
                     try:
@@ -1148,19 +1151,32 @@ class AKShareProvider(BaseStockDataProvider):
                             time.sleep(retry_delay)
                             retry_delay *= 2  # 指数退避
                         else:
-                            self.logger.error(f"❌ {symbol} 获取新闻失败(JSON解析错误): {e}")
-                            return None
+                            self.logger.warning(f"⚠️ {symbol} AKShare获取新闻失败(JSON解析错误): {e}，尝试使用备用API...")
+                            akshare_failed = True
                     except Exception as e:
                         if attempt < max_retries - 1:
                             self.logger.warning(f"⚠️ {symbol} 第{attempt+1}次获取新闻失败: {e}，{retry_delay}秒后重试...")
                             time.sleep(retry_delay)
                             retry_delay *= 2
                         else:
-                            raise
+                            self.logger.warning(f"⚠️ {symbol} AKShare获取新闻失败: {e}，尝试使用备用API...")
+                            akshare_failed = True
 
+                # 如果 AKShare 成功获取到数据，直接返回
                 if news_df is not None and not news_df.empty:
                     self.logger.info(f"✅ {symbol} AKShare新闻获取成功: {len(news_df)} 条")
                     return news_df.head(limit) if limit else news_df
+
+                # 方案2：AKShare 失败或返回空数据，使用直接调用 API 作为备用
+                if akshare_failed or news_df is None or (hasattr(news_df, 'empty') and news_df.empty):
+                    self.logger.info(f"🔄 {symbol} 尝试使用直接调用东方财富 API 获取新闻...")
+                    direct_df = self._get_stock_news_direct(symbol_6, limit)
+                    if direct_df is not None and not direct_df.empty:
+                        self.logger.info(f"✅ {symbol} 直接调用API获取新闻成功: {len(direct_df)} 条")
+                        return direct_df
+                    else:
+                        self.logger.warning(f"⚠️ {symbol} 备用API也未获取到新闻数据")
+                        return None
                 else:
                     self.logger.warning(f"⚠️ {symbol} 未获取到AKShare新闻数据")
                     return None
@@ -1178,6 +1194,17 @@ class AKShareProvider(BaseStockDataProvider):
 
         except Exception as e:
             self.logger.error(f"❌ AKShare新闻获取失败: {e}")
+            # 对于个股新闻，尝试使用备用 API
+            if symbol:
+                try:
+                    self.logger.info(f"🔄 {symbol} 异常情况下尝试使用备用API...")
+                    symbol_6 = symbol.zfill(6)
+                    direct_df = self._get_stock_news_direct(symbol_6, limit)
+                    if direct_df is not None and not direct_df.empty:
+                        self.logger.info(f"✅ {symbol} 备用API获取新闻成功: {len(direct_df)} 条")
+                        return direct_df
+                except Exception as backup_e:
+                    self.logger.error(f"❌ {symbol} 备用API也失败: {backup_e}")
             return None
 
     async def get_stock_news(self, symbol: str = None, limit: int = 10) -> Optional[List[Dict[str, Any]]]:

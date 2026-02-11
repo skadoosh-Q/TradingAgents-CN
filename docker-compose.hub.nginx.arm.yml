@@ -5,7 +5,7 @@ version: '3.8'
 #
 # 使用方法：
 # 1. 复制.env.example为.env并配置环境变量
-# 2. 运行: docker-compose -f docker-compose.hub.nginx.yml up -d
+# 2. 运行: docker-compose -f docker-compose.hub.nginx.arm.yml up -d
 # 3. 访问: http://your-server (前端和后端API都通过80端口访问)
 #
 # 优势：
@@ -65,6 +65,7 @@ services:
   # FastAPI后端服务
   backend:
     image: hsliup/tradingagents-backend-arm64:latest
+    # image: hsliup/tradingagents-backend-arm64:v1.0.0-preview
     platform: linux/arm64  # 显式指定 ARM64 平台
     container_name: tradingagents-backend
     restart: unless-stopped
@@ -74,6 +75,9 @@ services:
       - ./logs:/app/logs
       #- ./config:/app/config
       - ./data:/app/data
+      # 挂载本地代码覆盖原代码，以修复或新增功能
+      - ./tradingagents:/app/tradingagents
+      - ./scripts:/app/scripts
     env_file:
       - .env
     environment:

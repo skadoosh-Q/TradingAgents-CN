@@ -20,6 +20,9 @@ services:
       - ./config:/app/config
       # 数据目录映射
       - ./data:/app/data
+      # 挂载本地代码覆盖原代码，以修复或新增功能
+      - ./tradingagents:/app/tradingagents
+      - ./scripts:/app/scripts
     env_file:
       - .env
     environment:

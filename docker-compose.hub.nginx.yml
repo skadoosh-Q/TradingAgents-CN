@@ -79,6 +79,9 @@ services:
       # 如需修改配置，请修改代码后重新构建镜像
       # - ./config:/app/config
       - ./data:/app/data
+      # 挂载本地代码覆盖原代码，以修复或新增功能
+      - ./tradingagents:/app/tradingagents
+      - ./scripts:/app/scripts
     env_file:
       - .env
     environment:
