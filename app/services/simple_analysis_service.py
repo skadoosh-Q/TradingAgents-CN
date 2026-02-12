@@ -1249,6 +1249,18 @@ class SimpleAnalysisService:
             config["deep_backend_url"] = deep_backend_url
             config["backend_url"] = quick_backend_url  # 保持向后兼容
 
+            # 📌 添加持仓信息到配置（如果用户已持有该股票）
+            if request.parameters and getattr(request.parameters, 'is_holding', False):
+                config["holding_info"] = {
+                    "is_holding": True,
+                    "shares": getattr(request.parameters, 'holding_shares', None),
+                    "cost_price": getattr(request.parameters, 'holding_cost_price', None),
+                }
+                logger.info(f"📌 [持仓信息] 用户已持有: 股数={config['holding_info']['shares']}, 成本价={config['holding_info']['cost_price']}")
+            else:
+                config["holding_info"] = None
+                logger.info(f"📌 [持仓信息] 用户未持有该股票，is_holding={getattr(request.parameters, 'is_holding', 'N/A') if request.parameters else 'no_params'}")
+
             # 🔍 验证配置中的模型
             logger.info(f"🔍 [模型验证] 配置中的快速模型: {config.get('quick_think_llm')}")
             logger.info(f"🔍 [模型验证] 配置中的深度模型: {config.get('deep_think_llm')}")

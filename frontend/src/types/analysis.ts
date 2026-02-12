@@ -26,6 +26,10 @@ export interface AnalysisParameters {
   custom_prompt?: string
   include_charts: boolean
   language: 'zh-CN' | 'en-US'
+  // 持仓信息（可选）
+  is_holding?: boolean
+  holding_shares?: number
+  holding_cost_price?: number
 }
 
 // 分析结果
@@ -55,17 +59,17 @@ export interface AnalysisTask {
   status: AnalysisStatus
   priority: number
   progress: number
-  
+
   // 时间戳
   created_at: string
   started_at?: string
   completed_at?: string
-  
+
   // 执行信息
   worker_id?: string
   parameters: AnalysisParameters
   result?: AnalysisResult
-  
+
   // 重试机制
   retry_count: number
   max_retries: number
@@ -80,22 +84,22 @@ export interface AnalysisBatch {
   title: string
   description?: string
   status: BatchStatus
-  
+
   // 任务统计
   total_tasks: number
   completed_tasks: number
   failed_tasks: number
   cancelled_tasks: number
   progress: number
-  
+
   // 时间戳
   created_at: string
   started_at?: string
   completed_at?: string
-  
+
   // 配置参数
   parameters: AnalysisParameters
-  
+
   // 结果摘要
   results_summary?: Record<string, any>
 }

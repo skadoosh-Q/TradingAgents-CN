@@ -19,6 +19,9 @@ def create_risk_manager(llm, memory):
         sentiment_report = state["sentiment_report"]
         trader_plan = state["investment_plan"]
 
+        # 📌 获取持仓信息（如果有）
+        holding_info = state.get("holding_info")
+
         curr_situation = f"{market_research_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
 
         # 安全检查：确保memory不为None
@@ -32,8 +35,26 @@ def create_risk_manager(llm, memory):
         for i, rec in enumerate(past_memories, 1):
             past_memory_str += rec["recommendation"] + "\n\n"
 
-        prompt = f"""作为风险管理委员会主席和辩论主持人，您的目标是评估三位风险分析师——激进、中性和安全/保守——之间的辩论，并确定交易员的最佳行动方案。您的决策必须产生明确的建议：买入、卖出或持有。只有在有具体论据强烈支持时才选择持有，而不是在所有方面都似乎有效时作为后备选择。力求清晰和果断。
+        # 📌 构建持仓上下文
+        holding_context = ""
+        if holding_info and holding_info.get("shares") and holding_info.get("cost_price"):
+            holding_shares = holding_info["shares"]
+            holding_cost = holding_info["cost_price"]
+            holding_context = f"""
 
+📌 **重要 - 用户持仓信息**：
+- 用户当前持有 {company_name} 共 {holding_shares} 股
+- 持仓成本价：{holding_cost} 元/股
+- 请在风险评估中特别考虑：
+  1. 基于成本价的浮盈/浮亏比例和金额
+  2. 止损线建议（基于成本价）
+  3. 分批止盈策略（基于成本价）
+  4. 仓位管理建议（是否需要调整仓位比例）
+
+"""
+
+        prompt = f"""作为风险管理委员会主席和辩论主持人，您的目标是评估三位风险分析师——激进、中性和安全/保守——之间的辩论，并确定交易员的最佳行动方案。您的决策必须产生明确的建议：买入、卖出或持有。只有在有具体论据强烈支持时才选择持有，而不是在所有方面都似乎有效时作为后备选择。力求清晰和果断。
+{holding_context}
 决策指导原则：
 1. **总结关键论点**：提取每位分析师的最强观点，重点关注与背景的相关性。
 2. **提供理由**：用辩论中的直接引用和反驳论点支持您的建议。

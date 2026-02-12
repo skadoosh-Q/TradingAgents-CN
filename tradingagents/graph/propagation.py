@@ -20,7 +20,7 @@ class Propagator:
         self.max_recur_limit = max_recur_limit
 
     def create_initial_state(
-        self, company_name: str, trade_date: str
+        self, company_name: str, trade_date: str, config: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """Create the initial state for the agent graph."""
         from langchain_core.messages import HumanMessage
@@ -29,10 +29,25 @@ class Propagator:
         # 这样可以确保所有LLM（包括DeepSeek）都能理解任务
         analysis_request = f"请对股票 {company_name} 进行全面分析，交易日期为 {trade_date}。"
 
+        # 📌 如果用户有持仓信息，注入到初始消息中
+        holding_info = None
+        if config and config.get("holding_info"):
+            holding_info = config["holding_info"]
+            shares = holding_info.get("shares")
+            cost_price = holding_info.get("cost_price")
+            if shares and cost_price:
+                analysis_request += (
+                    f"\n\n📌 用户持仓信息：用户当前持有该股票 {shares} 股，"
+                    f"持仓成本价为 {cost_price} 元/股。"
+                    f"请在分析中特别考虑用户的持仓状况，提供针对性的操作建议"
+                    f"（如继续持有、加仓、减仓、止盈、止损等）。"
+                )
+
         return {
             "messages": [HumanMessage(content=analysis_request)],
             "company_of_interest": company_name,
             "trade_date": str(trade_date),
+            "holding_info": holding_info,  # 📌 传递持仓信息到 state
             "investment_debate_state": InvestDebateState(
                 {"history": "", "current_response": "", "count": 0}
             ),

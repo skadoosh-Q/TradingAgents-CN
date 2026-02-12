@@ -34,6 +34,10 @@ export interface SingleAnalysisRequest {
     language?: string
     quick_analysis_model?: string
     deep_analysis_model?: string
+    // 持仓信息（可选）
+    is_holding?: boolean
+    holding_shares?: number | null
+    holding_cost_price?: number | null
   }
 }
 
@@ -181,7 +185,7 @@ export const analysisApi = {
     symbols?: string[]  // 主字段：股票代码列表
     stock_codes?: string[]  // 兼容字段（已废弃）
     parameters?: SingleAnalysisRequest['parameters']
-  }): Promise<ApiResponse<{ batch_id: string; total_tasks: number; task_ids: string[]; mapping?: any[]; status: string }>>{
+  }): Promise<ApiResponse<{ batch_id: string; total_tasks: number; task_ids: string[]; mapping?: any[]; status: string }>> {
     return request.post('/api/analysis/batch', batchRequest)
   },
 
@@ -196,12 +200,12 @@ export const analysisApi = {
   },
 
   // 获取任务列表（新版 simple service）
-  getTaskList(params?: { status?: string; limit?: number; offset?: number }): Promise<any>{
+  getTaskList(params?: { status?: string; limit?: number; offset?: number }): Promise<any> {
     return request.get('/api/analysis/tasks', { params })
   },
 
   // 获取任务结果（新版 simple service）
-  getTaskResult(taskId: string): Promise<any>{
+  getTaskResult(taskId: string): Promise<any> {
     return request.get(`/api/analysis/tasks/${taskId}/result`)
   },
 

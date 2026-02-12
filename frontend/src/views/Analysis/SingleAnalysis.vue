@@ -95,6 +95,59 @@
                     :disabled-date="disabledDate"
                   />
                 </el-form-item>
+
+                <!-- 📌 持仓信息 -->
+                <div class="holding-section">
+                  <el-form-item label="是否已持有">
+                    <el-switch
+                      v-model="analysisForm.isHolding"
+                      active-text="已持有"
+                      inactive-text="未持有"
+                      size="large"
+                      inline-prompt
+                      style="--el-switch-on-color: #13ce66; --el-switch-off-color: #dcdfe6;"
+                    />
+                  </el-form-item>
+
+                  <el-row v-if="analysisForm.isHolding" :gutter="16" class="holding-inputs">
+                    <el-col :span="12">
+                      <el-form-item label="持有股数">
+                        <el-input-number
+                          v-model="analysisForm.holdingShares"
+                          :min="1"
+                          :step="100"
+                          placeholder="请输入持有股数"
+                          size="large"
+                          style="width: 100%"
+                          controls-position="right"
+                        />
+                      </el-form-item>
+                    </el-col>
+                    <el-col :span="12">
+                      <el-form-item label="成本价">
+                        <el-input-number
+                          v-model="analysisForm.holdingCostPrice"
+                          :min="0.01"
+                          :precision="2"
+                          :step="0.1"
+                          placeholder="请输入每股成本价"
+                          size="large"
+                          style="width: 100%"
+                          controls-position="right"
+                        />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+
+                  <el-alert
+                    v-if="analysisForm.isHolding"
+                    title="持仓信息将用于AI分析，帮助您获得更精准的加仓/减仓/止盈/止损建议"
+                    type="success"
+                    :closable="false"
+                    show-icon
+                    style="margin-top: 4px; margin-bottom: 8px;"
+                  />
+                </div>
               </div>
 
               <!-- 分析深度 -->
@@ -738,6 +791,10 @@ interface AnalysisForm {
   includeSentiment: boolean
   includeRisk: boolean
   language: 'zh-CN' | 'en-US'
+  // 持仓信息
+  isHolding: boolean
+  holdingShares: number | null
+  holdingCostPrice: number | null
 }
 
 // 使用store
@@ -810,7 +867,11 @@ const analysisForm = reactive<AnalysisForm>({
   selectedAnalysts: ['市场分析师', '基本面分析师'], // 将在 onMounted 中从用户偏好加载
   includeSentiment: true,
   includeRisk: true,
-  language: 'zh-CN'
+  language: 'zh-CN',
+  // 持仓信息
+  isHolding: false,
+  holdingShares: null,
+  holdingCostPrice: null
 })
 
 // 股票代码验证相关
@@ -949,7 +1010,11 @@ const submitAnalysis = async () => {
         include_risk: analysisForm.includeRisk,
         language: analysisForm.language,
         quick_analysis_model: modelSettings.value.quickAnalysisModel,
-        deep_analysis_model: modelSettings.value.deepAnalysisModel
+        deep_analysis_model: modelSettings.value.deepAnalysisModel,
+        // 📌 传递持仓信息
+        is_holding: analysisForm.isHolding,
+        holding_shares: analysisForm.isHolding ? analysisForm.holdingShares : undefined,
+        holding_cost_price: analysisForm.isHolding ? analysisForm.holdingCostPrice : undefined
       }
     }
 
@@ -2332,6 +2397,36 @@ onMounted(async () => {
           margin: 0 0 16px 0;
           padding-bottom: 8px;
           border-bottom: 2px solid #e2e8f0;
+        }
+      }
+
+      /* 📌 持仓信息区域 */
+      .holding-section {
+        margin-top: 8px;
+        padding: 12px 16px;
+        border-radius: 8px;
+        background: linear-gradient(135deg, #f0fdf4 0%, #f8fafc 100%);
+        border: 1px solid #e2e8f0;
+        border-left: 3px solid #13ce66;
+        transition: all 0.3s ease;
+
+        .holding-inputs {
+          animation: fadeInDown 0.3s ease;
+        }
+
+        :deep(.el-form-item) {
+          margin-bottom: 12px;
+        }
+      }
+
+      @keyframes fadeInDown {
+        from {
+          opacity: 0;
+          transform: translateY(-8px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
         }
       }
 

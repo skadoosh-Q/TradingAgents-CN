@@ -16,6 +16,9 @@ def create_trader(llm, memory):
         news_report = state["news_report"]
         fundamentals_report = state["fundamentals_report"]
 
+        # 📌 获取持仓信息（如果有）
+        holding_info = state.get("holding_info")
+
         # 使用统一的股票类型检测
         from tradingagents.utils.stock_utils import StockUtils
         market_info = StockUtils.get_market_info(company_name)
@@ -33,6 +36,8 @@ def create_trader(llm, memory):
         logger.debug(f"💰 [DEBUG] 市场详情: 中国A股={is_china}, 港股={is_hk}, 美股={is_us}")
         logger.debug(f"💰 [DEBUG] 基本面报告长度: {len(fundamentals_report)}")
         logger.debug(f"💰 [DEBUG] 基本面报告前200字符: {fundamentals_report[:200]}...")
+        if holding_info:
+            logger.info(f"📌 [DEBUG] 用户持仓信息: 股数={holding_info.get('shares')}, 成本价={holding_info.get('cost_price')}")
 
         curr_situation = f"{market_research_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
 
@@ -48,6 +53,24 @@ def create_trader(llm, memory):
             past_memories = []
             past_memory_str = "暂无历史记忆数据可参考。"
 
+        # 📌 构建持仓上下文提示
+        holding_context = ""
+        if holding_info and holding_info.get("shares") and holding_info.get("cost_price"):
+            holding_shares = holding_info["shares"]
+            holding_cost = holding_info["cost_price"]
+            holding_context = f"""
+
+📌 **用户持仓信息**（请务必在分析中重点考虑）：
+- 当前持有: {holding_shares} 股
+- 持仓成本价: {currency_symbol}{holding_cost}
+- 请基于用户的持仓成本，在以下方面给出具体建议：
+  1. 计算当前浮动盈亏比例，并说明盈亏状况
+  2. 是否建议继续持有、加仓、减仓或清仓
+  3. 如建议加仓，给出合理的加仓价位和数量建议
+  4. 如建议减仓/清仓，给出分批卖出的策略
+  5. 给出止盈价位和止损价位建议（基于成本价）
+"""
+
         context = {
             "role": "user",
             "content": f"Based on a comprehensive analysis by a team of analysts, here is an investment plan tailored for {company_name}. This plan incorporates insights from current technical market trends, macroeconomic indicators, and social media sentiment. Use this plan as a foundation for evaluating your next trading decision.\n\nProposed Investment Plan: {investment_plan}\n\nLeverage these insights to make an informed and strategic decision.",
@@ -59,7 +82,7 @@ def create_trader(llm, memory):
                 "content": f"""您是一位专业的交易员，负责分析市场数据并做出投资决策。基于您的分析，请提供具体的买入、卖出或持有建议。
 
 ⚠️ 重要提醒：当前分析的股票代码是 {company_name}，请使用正确的货币单位：{currency}（{currency_symbol}）
-
+{holding_context}
 🔴 严格要求：
 - 股票代码 {company_name} 的公司名称必须严格按照基本面报告中的真实数据
 - 绝对禁止使用错误的公司名称或混淆不同的股票

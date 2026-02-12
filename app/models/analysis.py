@@ -51,6 +51,10 @@ class AnalysisParameters(BaseModel):
     # 模型配置
     quick_analysis_model: Optional[str] = "qwen-turbo"
     deep_analysis_model: Optional[str] = "qwen-max"
+    # 持仓信息（可选）
+    is_holding: bool = False  # 是否已持有该股票
+    holding_shares: Optional[int] = None  # 持有股数
+    holding_cost_price: Optional[float] = None  # 持仓成本价
 
 
 class AnalysisResult(BaseModel):

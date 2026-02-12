@@ -80,6 +80,7 @@ services:
       # - ./config:/app/config
       - ./data:/app/data
       # 挂载本地代码覆盖原代码，以修复或新增功能
+      - ./app:/app/app
       - ./tradingagents:/app/tradingagents
       - ./scripts:/app/scripts
     env_file:
@@ -155,7 +156,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.frontend
-    image: hsliup/tradingagents-frontend:latest
+    # image: hsliup/tradingagents-frontend:latest
     container_name: tradingagents-frontend
     restart: unless-stopped
     expose:
