@@ -68,7 +68,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.backend
-    image: hsliup/tradingagents-backend:latest
+    image: tradingagents-backend:v1.0.0-preview
     container_name: tradingagents-backend
     restart: unless-stopped
     expose:
@@ -77,7 +77,7 @@ services:
       - ./logs:/app/logs
       # 不映射config目录，使用镜像内的配置文件
       # 如需修改配置，请修改代码后重新构建镜像
-      # - ./config:/app/config
+      - ./config:/app/config
       - ./data:/app/data
       # 挂载本地代码覆盖原代码，以修复或新增功能
       - ./app:/app/app
