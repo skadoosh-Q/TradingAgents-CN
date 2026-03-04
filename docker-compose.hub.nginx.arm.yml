@@ -64,8 +64,8 @@ services:
 
   # FastAPI后端服务
   backend:
-    image: hsliup/tradingagents-backend-arm64:latest
-    # image: hsliup/tradingagents-backend-arm64:v1.0.0-preview
+    # image: hsliup/tradingagents-backend-arm64:latest
+    image: hsliup/tradingagents-backend-arm64:v1.0.0-preview
     platform: linux/arm64  # 显式指定 ARM64 平台
     container_name: tradingagents-backend
     restart: unless-stopped
