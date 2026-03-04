@@ -10,10 +10,14 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+import hashlib
 
 # 添加项目根目录到 Python 路径
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
+
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
 
 def fix_admin_password():
     """修复管理员密码配置"""
@@ -70,12 +74,6 @@ def create_web_users_config():
         if users_file.exists():
             print("✓ Web 用户配置文件已存在")
             return True
-        
-        # 创建默认用户配置
-        import hashlib
-        
-        def hash_password(password: str) -> str:
-            return hashlib.sha256(password.encode()).hexdigest()
         
         default_users = {
             "admin": {
@@ -179,7 +177,7 @@ def create_basic_mongodb_data(client):
             admin_user = {
                 "username": "admin",
                 "email": "admin@tradingagents.cn",
-                "password": admin_password,  # 开源版使用明文密码
+                "password": hash_password(admin_password), 
                 "full_name": "系统管理员",
                 "role": "admin",
                 "is_active": True,

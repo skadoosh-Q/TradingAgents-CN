@@ -14,7 +14,7 @@
 
 ## 解决方案
 
-我们提供了三个初始化脚本来解决这些问题：
+我们提供了多个初始化与诊断脚本来解决这些问题：
 
 ### 1. 快速修复脚本（推荐）
 
@@ -34,7 +34,22 @@ python scripts/quick_login_fix.py
 - 检查并创建基础 MongoDB 数据
 - 验证 .env 文件
 
-### 2. 完整初始化脚本
+### 2. 容器内初始化脚本
+
+**适用场景**：在 backend 容器中运行时快速完成数据库集合、索引、基础数据、大模型厂家及模型目录的初始化。
+
+```bash
+# 在宿主机里调用容器命令
+docker-compose exec backend python /app/scripts/container_init.py
+```
+
+**功能**：
+- 等待 MongoDB/Redis 启动
+- 创建必要集合（含 llm_providers、model_catalog ）
+- 初始化系统配置、大模型厂家列表、模型目录
+- 创建管理员用户
+
+### 3. 完整初始化脚本
 
 **适用场景**：全新部署，需要完整的系统初始化
 
@@ -54,7 +69,7 @@ python scripts/docker_deployment_init.py
 - 设置管理员密码
 - 创建 .env 文件
 
-### 3. 系统状态检查
+### 4. 系统状态检查
 
 **适用场景**：检查系统当前状态
 
@@ -62,7 +77,6 @@ python scripts/docker_deployment_init.py
 # PowerShell 脚本（Windows）
 .\scripts\docker_init.ps1 -CheckOnly
 ```
-
 ## 使用步骤
 
 ### 步骤 1：启动 Docker 服务
