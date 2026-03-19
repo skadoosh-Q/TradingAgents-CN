@@ -1130,56 +1130,41 @@ class AKShareProvider(BaseStockDataProvider):
 
             if symbol:
                 # 获取个股新闻
-                self.logger.debug(f"📰 获取AKShare个股新闻: {symbol}")
+                self.logger.debug(f"📰 获取个股新闻: {symbol}")
 
                 # 标准化股票代码
                 symbol_6 = symbol.zfill(6)
 
-                # 方案1：尝试使用 AKShare 的 stock_news_em 接口
-                max_retries = 2  # 减少重试次数以加快切换到备用方案
-                retry_delay = 1  # 秒
+                # 方案1（优先）：直接调用东方财富 API（使用 curl_cffi 模拟浏览器，更稳定）
+                # 原因：akshare 的 stock_news_em 使用 requests 库直接请求，
+                #       东方财富服务器检测到非浏览器请求后会返回不含新闻的数据（只有 passportWeb），
+                #       导致 KeyError: 'cmsArticleWebOld'
+                self.logger.info(f"🔄 {symbol} 优先使用直接调用东方财富 API (curl_cffi)...")
+                direct_df = self._get_stock_news_direct(symbol_6, limit)
+                if direct_df is not None and not direct_df.empty:
+                    self.logger.info(f"✅ {symbol} 直接调用API获取新闻成功: {len(direct_df)} 条")
+                    return direct_df
+
+                # 方案2（备用）：尝试使用 AKShare 的 stock_news_em 接口
+                self.logger.info(f"� {symbol} 直接API未获取到数据，尝试 AKShare...")
                 news_df = None
-                akshare_failed = False
 
-                for attempt in range(max_retries):
-                    try:
-                        news_df = ak.stock_news_em(symbol=symbol_6)
-                        break  # 成功则跳出重试循环
-                    except json.JSONDecodeError as e:
-                        if attempt < max_retries - 1:
-                            self.logger.warning(f"⚠️ {symbol} 第{attempt+1}次获取新闻失败(JSON解析错误)，{retry_delay}秒后重试...")
-                            time.sleep(retry_delay)
-                            retry_delay *= 2  # 指数退避
-                        else:
-                            self.logger.warning(f"⚠️ {symbol} AKShare获取新闻失败(JSON解析错误): {e}，尝试使用备用API...")
-                            akshare_failed = True
-                    except Exception as e:
-                        if attempt < max_retries - 1:
-                            self.logger.warning(f"⚠️ {symbol} 第{attempt+1}次获取新闻失败: {e}，{retry_delay}秒后重试...")
-                            time.sleep(retry_delay)
-                            retry_delay *= 2
-                        else:
-                            self.logger.warning(f"⚠️ {symbol} AKShare获取新闻失败: {e}，尝试使用备用API...")
-                            akshare_failed = True
+                try:
+                    news_df = ak.stock_news_em(symbol=symbol_6)
+                except (json.JSONDecodeError, KeyError) as e:
+                    # KeyError: 'cmsArticleWebOld' — 东方财富反爬，返回的数据中不含新闻字段
+                    # JSONDecodeError — JSONP 响应格式异常
+                    self.logger.warning(f"⚠️ {symbol} AKShare获取新闻失败({type(e).__name__}: {e})，东方财富可能触发了反爬机制")
+                except Exception as e:
+                    self.logger.warning(f"⚠️ {symbol} AKShare获取新闻失败: {e}")
 
-                # 如果 AKShare 成功获取到数据，直接返回
+                # 如果 AKShare 成功获取到数据，返回
                 if news_df is not None and not news_df.empty:
                     self.logger.info(f"✅ {symbol} AKShare新闻获取成功: {len(news_df)} 条")
                     return news_df.head(limit) if limit else news_df
 
-                # 方案2：AKShare 失败或返回空数据，使用直接调用 API 作为备用
-                if akshare_failed or news_df is None or (hasattr(news_df, 'empty') and news_df.empty):
-                    self.logger.info(f"🔄 {symbol} 尝试使用直接调用东方财富 API 获取新闻...")
-                    direct_df = self._get_stock_news_direct(symbol_6, limit)
-                    if direct_df is not None and not direct_df.empty:
-                        self.logger.info(f"✅ {symbol} 直接调用API获取新闻成功: {len(direct_df)} 条")
-                        return direct_df
-                    else:
-                        self.logger.warning(f"⚠️ {symbol} 备用API也未获取到新闻数据")
-                        return None
-                else:
-                    self.logger.warning(f"⚠️ {symbol} 未获取到AKShare新闻数据")
-                    return None
+                self.logger.warning(f"⚠️ {symbol} 所有新闻获取方式均未获取到数据")
+                return None
             else:
                 # 获取市场新闻
                 self.logger.debug("📰 获取AKShare市场新闻")
