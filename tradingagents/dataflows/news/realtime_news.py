@@ -6,6 +6,7 @@
 
 import requests
 import json
+import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -340,21 +341,31 @@ class RealtimeNewsAggregator:
                         for _, row in news_df.iterrows():
                             try:
                                 # 解析时间
-                                time_str = row.get('时间', '')
-                                if time_str:
-                                    # 尝试解析时间格式，可能是'2023-01-01 12:34:56'格式
-                                    try:
-                                        publish_time = datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S').replace(tzinfo=ZoneInfo(get_timezone_name()))
-                                    except:
-                                        # 尝试其他可能的格式
-                                        try:
-                                            publish_time = datetime.strptime(time_str, '%Y-%m-%d').replace(tzinfo=ZoneInfo(get_timezone_name()))
-                                        except:
-                                            logger.warning(f"[中文财经新闻] 无法解析时间格式: {time_str}，使用当前时间")
-                                            publish_time = datetime.now(ZoneInfo(get_timezone_name()))
+                                time_value = row.get('发布时间', row.get('时间', ''))
+                                if isinstance(time_value, datetime):
+                                    publish_time = time_value
                                 else:
-                                    logger.warning(f"[中文财经新闻] 新闻时间为空，使用当前时间")
-                                    publish_time = datetime.now(ZoneInfo(get_timezone_name()))
+                                    time_str = str(time_value).strip()
+                                    publish_time = None
+                                    for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d'):
+                                        try:
+                                            publish_time = datetime.strptime(time_str, fmt)
+                                            break
+                                        except (TypeError, ValueError):
+                                            continue
+
+                                if publish_time is None:
+                                    logger.warning(
+                                        f"[中文财经新闻] 新闻时间缺失或无法解析，跳过: {time_value}"
+                                    )
+                                    skipped_count += 1
+                                    continue
+
+                                timezone = ZoneInfo(get_timezone_name())
+                                if publish_time.tzinfo is None:
+                                    publish_time = publish_time.replace(tzinfo=timezone)
+                                else:
+                                    publish_time = publish_time.astimezone(timezone)
 
                                 # 检查时效性
                                 if publish_time < datetime.now(ZoneInfo(get_timezone_name())) - timedelta(hours=hours_back):
@@ -362,16 +373,18 @@ class RealtimeNewsAggregator:
                                     continue
 
                                 # 评估紧急程度
-                                title = row.get('标题', '')
-                                content = row.get('内容', '')
+                                title = str(row.get('新闻标题', row.get('标题', '')) or '')
+                                content = str(row.get('新闻内容', row.get('内容', '')) or '')
+                                title = re.sub(r'<[^>]+>', '', title).strip()
+                                content = re.sub(r'<[^>]+>', '', content).strip()
                                 urgency = self._assess_news_urgency(title, content)
 
                                 news_items.append(NewsItem(
                                     title=title,
                                     content=content,
-                                    source='东方财富',
+                                    source=str(row.get('新闻来源', '东方财富') or '东方财富'),
                                     publish_time=publish_time,
-                                    url=row.get('链接', ''),
+                                    url=str(row.get('新闻链接', row.get('链接', '')) or ''),
                                     urgency=urgency,
                                     relevance_score=self._calculate_relevance(title, ticker)
                                 ))

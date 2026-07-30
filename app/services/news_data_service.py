@@ -435,14 +435,14 @@ class NewsDataService:
                     except ValueError:
                         continue
                 
-                # 如果都失败了，返回当前时间
+                # 无法确认发布时间时保留为空，避免把旧新闻伪装成新新闻。
                 self.logger.warning(f"⚠️ 无法解析日期时间: {dt_value}")
-                return datetime.utcnow()
+                return None
                 
             except Exception:
-                return datetime.utcnow()
+                return None
         
-        return datetime.utcnow()
+        return None
     
     def _safe_float(self, value) -> Optional[float]:
         """安全转换为浮点数"""

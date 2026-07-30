@@ -4,6 +4,7 @@ AKShare统一数据提供器
 """
 import asyncio
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional, Union
 import pandas as pd
@@ -257,8 +258,15 @@ class AKShareProvider(BaseStockDataProvider):
                 })
 
             df = pd.DataFrame(news_data)
+            publish_sort = pd.to_datetime(df["发布时间"], errors="coerce")
+            df = (
+                df.assign(_publish_sort=publish_sort)
+                .sort_values("_publish_sort", ascending=False, na_position="last")
+                .drop(columns=["_publish_sort"])
+                .reset_index(drop=True)
+            )
             self.logger.info(f"✅ {symbol} 直接调用 API 获取新闻成功: {len(df)} 条")
-            return df
+            return df.head(limit)
 
         except Exception as e:
             self.logger.error(f"❌ {symbol} 直接调用 API 失败: {e}")
@@ -1296,6 +1304,15 @@ class AKShareProvider(BaseStockDataProvider):
                         title = str(row.get('新闻标题', '') or row.get('标题', ''))
                         content = str(row.get('新闻内容', '') or row.get('内容', ''))
                         summary = str(row.get('新闻摘要', '') or row.get('摘要', ''))
+                        title = re.sub(r'<[^>]+>', '', title).strip()
+                        content = re.sub(r'<[^>]+>', '', content).strip()
+                        publish_time = self._parse_news_time(
+                            row.get('发布时间', '') or row.get('时间', '')
+                        )
+
+                        if not publish_time:
+                            self.logger.warning(f"⚠️ 跳过发布时间无效的新闻: {title[:50]}")
+                            continue
 
                         news_item = {
                             "symbol": symbol,
@@ -1303,9 +1320,9 @@ class AKShareProvider(BaseStockDataProvider):
                             "content": content,
                             "summary": summary,
                             "url": str(row.get('新闻链接', '') or row.get('链接', '')),
-                            "source": str(row.get('文章来源', '') or row.get('来源', '') or '东方财富'),
+                            "source": str(row.get('新闻来源', '') or row.get('文章来源', '') or row.get('来源', '') or '东方财富'),
                             "author": str(row.get('作者', '') or ''),
-                            "publish_time": self._parse_news_time(row.get('发布时间', '') or row.get('时间', '')),
+                            "publish_time": publish_time,
                             "category": self._classify_news(content, title),
                             "sentiment": self._analyze_news_sentiment(content, title),
                             "sentiment_score": self._calculate_sentiment_score(content, title),
@@ -1376,7 +1393,7 @@ class AKShareProvider(BaseStockDataProvider):
     def _parse_news_time(self, time_str: str) -> Optional[datetime]:
         """解析新闻时间"""
         if not time_str:
-            return datetime.utcnow()
+            return None
 
         try:
             # 尝试多种时间格式
@@ -1404,13 +1421,13 @@ class AKShareProvider(BaseStockDataProvider):
                 except ValueError:
                     continue
 
-            # 如果都失败了，返回当前时间
+            # 时间不可信时丢弃，不能把旧新闻伪装成当前新闻。
             self.logger.debug(f"⚠️ 无法解析新闻时间: {time_str}")
-            return datetime.utcnow()
+            return None
 
         except Exception as e:
             self.logger.debug(f"解析新闻时间异常: {e}")
-            return datetime.utcnow()
+            return None
 
     def _analyze_news_sentiment(self, content: str, title: str) -> str:
         """

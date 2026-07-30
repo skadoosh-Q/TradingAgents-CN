@@ -138,7 +138,8 @@ def create_news_analyst(llm, toolkit):
 - 不允许回复'无法评估影响'或'需要更多信息'
 
 请特别注意：
-⚠️ 如果新闻数据存在滞后（超过2小时），请在分析中明确说明时效性限制
+⚠️ 必须以分析日期为基准逐条核对发布时间：0-7天为近期有效新闻，8-30天只能作为历史背景，超过30天不得纳入本次新闻结论
+⚠️ 如果没有0-7天新闻，必须明确写出“未获取到近期有效新闻”，并将当前新闻信号评为中性；不得把历史背景描述为当前催化剂
 ✅ 优先分析最新的、高相关性的新闻事件
 📊 提供新闻对市场情绪和投资者信心的影响评估
 💰 必须包含基于新闻的市场反应预期和投资建议
@@ -167,7 +168,7 @@ def create_news_analyst(llm, toolkit):
                     "\n4. 您的回答必须基于工具返回的真实数据"
                     "\n"
                     "\n🔧 工具调用格式示例："
-                    "\n调用: get_stock_news_unified(stock_code='{ticker}', max_news=10)"
+                    "\n调用: get_stock_news_unified(stock_code='{ticker}', max_news=10, analysis_date='{current_date}')"
                     "\n"
                     "\n⚠️ 如果您不调用工具，您的回答将被视为无效并被拒绝。"
                     "\n⚠️ 您必须先调用工具获取数据，然后基于数据进行分析。"
@@ -211,7 +212,12 @@ def create_news_analyst(llm, toolkit):
                 logger.info(f"[新闻分析师] 🔧 预处理：强制调用统一新闻工具...")
                 logger.info(f"[新闻分析师] 📊 调用参数: stock_code={ticker}, max_news=10, model_info={model_info}")
 
-                pre_fetched_news = unified_news_tool(stock_code=ticker, max_news=10, model_info=model_info)
+                pre_fetched_news = unified_news_tool(
+                    stock_code=ticker,
+                    max_news=10,
+                    model_info=model_info,
+                    analysis_date=current_date,
+                )
 
                 logger.info(f"[新闻分析师] 📋 预处理返回结果长度: {len(pre_fetched_news) if pre_fetched_news else 0} 字符")
                 logger.info(f"[新闻分析师] 📄 预处理返回结果预览 (前500字符): {pre_fetched_news[:500] if pre_fetched_news else 'None'}")
@@ -224,6 +230,7 @@ def create_news_analyst(llm, toolkit):
                     analysis_system_prompt = f"""您是一位专业的财经新闻分析师。
 
 您的职责是基于提供的新闻数据，对股票进行深入的新闻分析。
+本次分析基准日期是 {current_date}。
 
 分析要点：
 1. 总结最新的新闻事件和市场动态
@@ -231,11 +238,18 @@ def create_news_analyst(llm, toolkit):
 3. 评估市场情绪和投资者反应
 4. 提供基于新闻的投资建议
 
+新闻时效规则（必须执行）：
+- 发布时间距分析日期0-7天：近期有效新闻，可以用于判断当前催化和市场情绪。
+- 发布时间距分析日期8-30天：仅可作为历史背景，必须明确标注，不得称为“最新消息”或当前催化剂。
+- 发布时间距分析日期超过30天，或发布时间晚于分析日期：不得纳入本次新闻结论。
+- 如果没有0-7天内的有效新闻，必须明确写出“未获取到近期有效新闻”，当前新闻信号按中性处理，不得用旧闻填补。
+
 重要说明：新闻数据已经为您提供，您无需调用任何工具，直接基于提供的数据进行分析。"""
 
-                    enhanced_prompt = f"""请基于以下已获取的最新新闻数据，对股票 {ticker}（{company_name}）进行详细的新闻分析：
+                    enhanced_prompt = f"""请基于以下已获取的新闻数据，对股票 {ticker}（{company_name}）进行详细的新闻分析。
+分析基准日期：{current_date}。请先核验每条新闻的发布时间，再决定是否纳入结论。
 
-=== 最新新闻数据 ===
+=== 新闻数据（须按日期核验） ===
 {pre_fetched_news}
 
 请撰写详细的中文分析报告，包括：
@@ -341,7 +355,12 @@ def create_news_analyst(llm, toolkit):
                     logger.info(f"[新闻分析师] 🔧 强制调用统一新闻工具获取新闻数据...")
                     logger.info(f"[新闻分析师] 📊 调用参数: stock_code={ticker}, max_news=10")
 
-                    forced_news = unified_news_tool(stock_code=ticker, max_news=10, model_info=model_info)
+                    forced_news = unified_news_tool(
+                        stock_code=ticker,
+                        max_news=10,
+                        model_info=model_info,
+                        analysis_date=current_date,
+                    )
 
                     logger.info(f"[新闻分析师] 📋 强制获取返回结果长度: {len(forced_news) if forced_news else 0} 字符")
                     logger.info(f"[新闻分析师] 📄 强制获取返回结果预览 (前500字符): {forced_news[:500] if forced_news else 'None'}")
@@ -351,9 +370,10 @@ def create_news_analyst(llm, toolkit):
 
                         # 基于真实新闻数据重新生成分析
                         forced_prompt = f"""
-您是一位专业的财经新闻分析师。请基于以下最新获取的新闻数据，对股票 {ticker}（{company_name}）进行详细的新闻分析：
+您是一位专业的财经新闻分析师。请基于以下新闻数据，对股票 {ticker}（{company_name}）进行详细的新闻分析。
+本次分析基准日期是 {current_date}。0-7天新闻可用于当前判断，8-30天新闻只能作为历史背景，超过30天或晚于分析日期的新闻必须排除。如果没有0-7天有效新闻，明确说明并将当前新闻信号评为中性。
 
-=== 最新新闻数据 ===
+=== 新闻数据（须按日期核验） ===
 {forced_news}
 
 === 分析要求 ===
