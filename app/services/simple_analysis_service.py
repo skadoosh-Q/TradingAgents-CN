@@ -1508,6 +1508,38 @@ class SimpleAnalysisService:
                 except Exception as e:
                     logger.error(f"❌ Graph进度回调失败: {e}", exc_info=True)
 
+            def partial_report_callback(node_name: str, reports: Dict[str, str]):
+                """Persist reports as soon as their graph node completes."""
+                try:
+                    if not reports:
+                        return
+
+                    progress_tracker.update_partial_reports(reports)
+
+                    from pymongo import MongoClient
+                    from app.core.config import settings
+
+                    sync_client = MongoClient(settings.MONGO_URI)
+                    try:
+                        sync_db = sync_client[settings.MONGO_DB]
+                        report_updates = {
+                            f"partial_reports.{key}": value
+                            for key, value in reports.items()
+                        }
+                        report_updates["updated_at"] = datetime.utcnow()
+                        sync_db.analysis_tasks.update_one(
+                            {"task_id": task_id},
+                            {"$set": report_updates},
+                        )
+                    finally:
+                        sync_client.close()
+
+                    logger.info(
+                        f"📄 [阶段报告] {node_name}: {list(reports.keys())}"
+                    )
+                except Exception as e:
+                    logger.warning(f"⚠️ [阶段报告] 保存失败: {e}", exc_info=True)
+
             logger.info(f"🚀 准备调用 trading_graph.propagate，progress_callback={graph_progress_callback}")
 
             # 执行实际分析，传递进度回调和task_id
@@ -1515,7 +1547,8 @@ class SimpleAnalysisService:
                 request.stock_code,
                 analysis_date,
                 progress_callback=graph_progress_callback,
-                task_id=task_id
+                task_id=task_id,
+                partial_report_callback=partial_report_callback,
             )
 
             logger.info(f"✅ trading_graph.propagate 执行完成")
@@ -1917,7 +1950,10 @@ class SimpleAnalysisService:
                     'estimated_total_time': redis_progress.get('estimated_total_time', result.get('estimated_duration', 300)),  # 🔧 修复：使用Redis中的预估总时长
                     'steps': steps,
                     'start_time': result.get('start_time'),  # 保持原有格式
-                    'last_update': redis_progress.get('last_update', result.get('start_time'))
+                    'last_update': redis_progress.get('last_update', result.get('start_time')),
+                    'partial_reports': redis_progress.get(
+                        'partial_reports', result.get('partial_reports', {})
+                    )
                 })
             else:
                 # 如果Redis中没有，尝试从内存中的进度跟踪器获取
@@ -1927,15 +1963,18 @@ class SimpleAnalysisService:
 
                     # 合并进度跟踪器的详细信息
                     result.update({
-                        'progress': progress_data['progress'],
+                        'progress': progress_data.get('progress_percentage', 0),
                         'current_step': progress_data['current_step'],
-                        'message': progress_data['message'],
+                        'current_step_name': progress_data.get('current_step_name', ''),
+                        'current_step_description': progress_data.get('current_step_description', ''),
+                        'message': progress_data.get('last_message', ''),
                         'elapsed_time': progress_data['elapsed_time'],
                         'remaining_time': progress_data['remaining_time'],
                         'estimated_total_time': progress_data.get('estimated_total_time', 0),
                         'steps': progress_data['steps'],
                         'start_time': progress_data['start_time'],
-                        'last_update': progress_data['last_update']
+                        'last_update': progress_data['last_update'],
+                        'partial_reports': progress_data.get('partial_reports', {})
                     })
                     logger.info(f"📊 合并内存进度跟踪器数据: {task_id}")
                 else:

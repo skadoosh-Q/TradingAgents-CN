@@ -70,6 +70,7 @@ class RedisProgressTracker:
             'last_update': time.time(),
             'elapsed_time': 0.0,
             'remaining_time': 0.0,
+            'partial_reports': {},
             'steps': []
         }
 
@@ -342,6 +343,22 @@ class RedisProgressTracker:
             logger.error(f"[RedisProgress] update failed: {self.task_id} - {e}")
             return self.progress_data
 
+    def update_partial_reports(self, reports: Dict[str, str]) -> Dict[str, Any]:
+        """Merge completed stage reports into the persisted progress payload."""
+        valid_reports = {
+            key: value.strip()
+            for key, value in reports.items()
+            if isinstance(value, str) and value.strip()
+        }
+        if not valid_reports:
+            return self.progress_data
+
+        partial_reports = self.progress_data.setdefault('partial_reports', {})
+        partial_reports.update(valid_reports)
+        self.progress_data['last_update'] = time.time()
+        self._save_progress()
+        return self.progress_data
+
     def _update_steps_by_progress(self, progress_pct: float) -> None:
         """根据进度百分比自动更新步骤状态"""
         try:
@@ -464,7 +481,12 @@ class RedisProgressTracker:
                 'estimated_total_time': self.progress_data.get('estimated_total_time', 0),
                 'progress_percentage': self.progress_data.get('progress_percentage', 0),
                 'status': self.progress_data.get('status', 'pending'),
-                'current_step': self.progress_data.get('current_step')
+                'current_step': self.progress_data.get('current_step'),
+                'current_step_name': self.progress_data.get('current_step_name', ''),
+                'current_step_description': self.progress_data.get('current_step_description', ''),
+                'last_message': self.progress_data.get('last_message', ''),
+                'last_update': self.progress_data.get('last_update'),
+                'partial_reports': self.progress_data.get('partial_reports', {})
             }
         except Exception as e:
             logger.error(f"[RedisProgress] to_dict failed: {self.task_id} - {e}")

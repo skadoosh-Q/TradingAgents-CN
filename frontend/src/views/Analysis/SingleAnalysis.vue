@@ -530,6 +530,43 @@
         </el-col>
       </el-row>
 
+      <div
+        v-if="analysisStatus === 'running' && partialAnalysisReports.length > 0"
+        class="partial-results-section"
+      >
+        <el-card class="partial-results-card" shadow="never">
+          <template #header>
+            <div class="partial-results-header">
+              <div>
+                <h3>阶段分析结果</h3>
+                <span>已完成 {{ partialAnalysisReports.length }} 项，后续结果会自动补充</span>
+              </div>
+              <el-tag type="success" effect="plain">实时更新</el-tag>
+            </div>
+          </template>
+
+          <el-tabs
+            v-model="activePartialReportTab"
+            class="partial-report-tabs"
+            tab-position="top"
+          >
+            <el-tab-pane
+              v-for="(report, index) in partialAnalysisReports"
+              :key="report.title"
+              :name="index.toString()"
+              :label="report.title"
+            >
+              <div class="partial-report-content">
+                <div
+                  class="report-content"
+                  v-html="formatReportContent(report.content)"
+                ></div>
+              </div>
+            </el-tab-pane>
+          </el-tabs>
+        </el-card>
+      </div>
+
       <!-- 分析结果显示 -->
       <div v-if="showResults && analysisResults" class="results-section">
         <el-row :gutter="24">
@@ -810,7 +847,9 @@ const currentTaskId = ref('')
 const analysisStatus = ref('idle') // 'idle', 'running', 'completed', 'failed'
 const showResults = ref(false)
 const analysisResults = ref<any>(null)
+const partialReports = ref<Record<string, string>>({})
 const activeReportTab = ref('') // 当前激活的报告标签页
+const activePartialReportTab = ref('0')
 const progressInfo = ref({
   progress: 0,
   currentStep: '',
@@ -1045,6 +1084,8 @@ const submitAnalysis = async () => {
 
     analysisStatus.value = 'running'
     showResults.value = false
+    partialReports.value = {}
+    activePartialReportTab.value = '0'
     progressInfo.value = {
       progress: 0,
       currentStep: '正在初始化分析...',
@@ -1239,6 +1280,13 @@ const updateProgressInfo = (status: any) => {
     progressInfo.value.message = status.message
   }
 
+  if (status.partial_reports && typeof status.partial_reports === 'object') {
+    partialReports.value = {
+      ...partialReports.value,
+      ...status.partial_reports
+    }
+  }
+
   // 接收后端返回的时间数据
   if (status.elapsed_time !== undefined) {
     progressInfo.value.elapsedTime = status.elapsed_time
@@ -1274,6 +1322,8 @@ const updateProgressInfo = (status: any) => {
 const restartAnalysis = () => {
   // 清除任务缓存
   clearTaskCache()
+  partialReports.value = {}
+  activePartialReportTab.value = '0'
 
   analysisStatus.value = 'idle'
   showResults.value = false
@@ -1377,6 +1427,10 @@ const getAnalysisReports = (data: any) => {
 
   return reports
 }
+
+const partialAnalysisReports = computed(() => {
+  return getAnalysisReports({ reports: partialReports.value })
+})
 
 // 获取报告图标
 const getReportIcon = (title: string) => {
@@ -3255,6 +3309,42 @@ onMounted(async () => {
 .reports-section h4 {
   color: #1f2937;
   margin-bottom: 16px;
+}
+
+.partial-results-section {
+  margin: 24px 0 32px;
+}
+
+.partial-results-card {
+  border-color: var(--el-color-success-light-5);
+}
+
+.partial-results-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.partial-results-header h3 {
+  margin: 0 0 6px;
+  color: var(--el-text-color-primary);
+  font-size: 18px;
+}
+
+.partial-results-header span {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
+.partial-report-tabs :deep(.el-tabs__nav-wrap) {
+  padding: 0 4px;
+}
+
+.partial-report-content {
+  max-height: 560px;
+  overflow-y: auto;
+  padding: 8px 12px 16px;
 }
 
 .report-content {

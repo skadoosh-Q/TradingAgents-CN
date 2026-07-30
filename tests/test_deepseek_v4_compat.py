@@ -4,6 +4,8 @@ from app.services.config_service import ConfigService
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from tradingagents.llm_adapters.deepseek_adapter import ChatDeepSeek
+from tradingagents.graph.trading_graph import TradingAgentsGraph
+from app.services.progress.tracker import RedisProgressTracker
 
 
 def test_deepseek_v4_adapter_disables_thinking_by_default():
@@ -120,3 +122,51 @@ def test_deepseek_reasoning_content_is_preserved_across_tool_roundtrip():
 
     assert payload["messages"][1]["reasoning_content"] == "需要先读取行情数据"
     assert payload["messages"][2]["content"] == "行情数据"
+
+
+def test_partial_reports_are_extracted_from_graph_updates():
+    reports = TradingAgentsGraph._extract_partial_reports({
+        "market_report": "技术面报告",
+        "investment_debate_state": {
+            "bull_history": "多头观点",
+            "bear_history": "空头观点",
+            "judge_decision": "研究经理结论",
+        },
+        "risk_debate_state": {
+            "risky_history": "激进观点",
+            "safe_history": "保守观点",
+            "neutral_history": "中性观点",
+            "judge_decision": "风险经理结论",
+        },
+    })
+
+    assert reports == {
+        "market_report": "技术面报告",
+        "bull_researcher": "多头观点",
+        "bear_researcher": "空头观点",
+        "research_team_decision": "研究经理结论",
+        "risky_analyst": "激进观点",
+        "safe_analyst": "保守观点",
+        "neutral_analyst": "中性观点",
+        "risk_management_decision": "风险经理结论",
+    }
+
+
+def test_progress_tracker_merges_partial_reports_before_persisting():
+    tracker = object.__new__(RedisProgressTracker)
+    tracker.progress_data = {
+        "partial_reports": {"market_report": "旧市场报告"}
+    }
+    tracker._save_progress = Mock()
+
+    result = tracker.update_partial_reports({
+        "market_report": " 新市场报告 ",
+        "news_report": "新闻报告",
+        "empty_report": "   ",
+    })
+
+    assert result["partial_reports"] == {
+        "market_report": "新市场报告",
+        "news_report": "新闻报告",
+    }
+    tracker._save_progress.assert_called_once_with()
