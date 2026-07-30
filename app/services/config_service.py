@@ -3565,19 +3565,27 @@ class ConfigService:
             data = {
                 "model": model_name,
                 "messages": [
-                    {"role": "user", "content": "你好，请简单介绍一下你自己。"}
+                    {"role": "user", "content": "你好，请回复 OK。"}
                 ],
-                "max_tokens": 50,
+                "max_tokens": 200,
                 "temperature": 0.1
             }
+
+            # DeepSeek V4 默认开启思考模式，测试连接时关闭思考，避免较小的
+            # token 预算被 reasoning_content 用尽而导致最终 content 为空。
+            if model_name.lower().startswith("deepseek-v4-"):
+                data["thinking"] = {"type": "disabled"}
 
             response = requests.post(url, json=data, headers=headers, timeout=10)
 
             if response.status_code == 200:
                 result = response.json()
                 if "choices" in result and len(result["choices"]) > 0:
-                    content = result["choices"][0]["message"]["content"]
-                    if content and len(content.strip()) > 0:
+                    message = result["choices"][0].get("message", {})
+                    content = message.get("content")
+                    reasoning_content = message.get("reasoning_content")
+                    if ((content and content.strip()) or
+                            (reasoning_content and reasoning_content.strip())):
                         return {
                             "success": True,
                             "message": f"{display_name} API连接测试成功"

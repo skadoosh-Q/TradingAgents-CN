@@ -38,7 +38,16 @@ from .reflection import Reflector
 from .signal_processing import SignalProcessor
 
 
-def create_llm_by_provider(provider: str, model: str, backend_url: str, temperature: float, max_tokens: int, timeout: int, api_key: str = None):
+def create_llm_by_provider(
+    provider: str,
+    model: str,
+    backend_url: str,
+    temperature: float,
+    max_tokens: int,
+    timeout: int,
+    api_key: str = None,
+    analysis_role: str = "quick",
+):
     """
     根据 provider 创建对应的 LLM 实例
 
@@ -50,6 +59,7 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
         max_tokens: 最大 token 数
         timeout: 超时时间
         api_key: API Key（可选，如果未提供则从环境变量读取）
+        analysis_role: 分析角色（quick/deep），用于厂商特定的推理参数
 
     Returns:
         LLM 实例
@@ -96,13 +106,23 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
         if not deepseek_api_key:
             raise ValueError("使用DeepSeek需要设置DEEPSEEK_API_KEY环境变量或在数据库中配置API Key")
 
+        deepseek_kwargs = {}
+        if model.lower().startswith("deepseek-v4-"):
+            thinking_enabled = analysis_role == "deep"
+            deepseek_kwargs["extra_body"] = {
+                "thinking": {"type": "enabled" if thinking_enabled else "disabled"}
+            }
+            if thinking_enabled:
+                deepseek_kwargs["reasoning_effort"] = "high"
+
         return ChatDeepSeek(
             model=model,
             api_key=deepseek_api_key,
             base_url=backend_url,
             temperature=temperature,
             max_tokens=max_tokens,
-            timeout=timeout
+            timeout=timeout,
+            **deepseek_kwargs,
         )
 
     elif provider.lower() == "zhipu":
@@ -253,7 +273,8 @@ class TradingAgentsGraph:
                 temperature=quick_temperature,
                 max_tokens=quick_max_tokens,
                 timeout=quick_timeout,
-                api_key=self.config.get("quick_api_key")  # 🔥 传递 API Key
+                api_key=self.config.get("quick_api_key"),  # 🔥 传递 API Key
+                analysis_role="quick",
             )
 
             self.deep_thinking_llm = create_llm_by_provider(
@@ -263,7 +284,8 @@ class TradingAgentsGraph:
                 temperature=deep_temperature,
                 max_tokens=deep_max_tokens,
                 timeout=deep_timeout,
-                api_key=self.config.get("deep_api_key")  # 🔥 传递 API Key
+                api_key=self.config.get("deep_api_key"),  # 🔥 传递 API Key
+                analysis_role="deep",
             )
 
             logger.info(f"✅ [混合模式] LLM 实例创建成功")
@@ -503,11 +525,23 @@ class TradingAgentsGraph:
             # DeepSeek V3配置 - 使用支持token统计的适配器
             from tradingagents.llm_adapters.deepseek_adapter import ChatDeepSeek
 
-            deepseek_api_key = os.getenv('DEEPSEEK_API_KEY')
-            if not deepseek_api_key:
-                raise ValueError("使用DeepSeek需要设置DEEPSEEK_API_KEY环境变量")
+            # 优先使用分析配置中从数据库解析出的模型/厂家配置，环境变量仅作为回退。
+            quick_api_key = self.config.get("quick_api_key") or os.getenv("DEEPSEEK_API_KEY")
+            deep_api_key = self.config.get("deep_api_key") or os.getenv("DEEPSEEK_API_KEY")
+            if not quick_api_key or not deep_api_key:
+                raise ValueError("使用DeepSeek需要在模型、厂家配置或DEEPSEEK_API_KEY中设置API密钥")
 
-            deepseek_base_url = os.getenv('DEEPSEEK_BASE_URL', 'https://api.deepseek.com')
+            default_base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+            quick_base_url = (
+                self.config.get("quick_backend_url")
+                or self.config.get("backend_url")
+                or default_base_url
+            )
+            deep_base_url = (
+                self.config.get("deep_backend_url")
+                or self.config.get("backend_url")
+                or default_base_url
+            )
 
             # 🔧 从配置中读取模型参数（优先使用用户配置，否则使用默认值）
             quick_config = self.config.get("quick_model_config", {})
@@ -526,22 +560,37 @@ class TradingAgentsGraph:
             logger.info(f"🔧 [DeepSeek-快速模型] max_tokens={quick_max_tokens}, temperature={quick_temperature}, timeout={quick_timeout}s")
             logger.info(f"🔧 [DeepSeek-深度模型] max_tokens={deep_max_tokens}, temperature={deep_temperature}, timeout={deep_timeout}s")
 
-            # 使用支持token统计的DeepSeek适配器
+            deep_kwargs = {}
+            if self.config["deep_think_llm"].lower().startswith("deepseek-v4-"):
+                deep_kwargs = {
+                    "extra_body": {"thinking": {"type": "enabled"}},
+                    "reasoning_effort": "high",
+                }
+
+            quick_kwargs = {}
+            if self.config["quick_think_llm"].lower().startswith("deepseek-v4-"):
+                quick_kwargs = {
+                    "extra_body": {"thinking": {"type": "disabled"}},
+                }
+
+            # 快速角色稳定调用工具，深度角色负责开启推理并综合决策。
             self.deep_thinking_llm = ChatDeepSeek(
                 model=self.config["deep_think_llm"],
-                api_key=deepseek_api_key,
-                base_url=deepseek_base_url,
+                api_key=deep_api_key,
+                base_url=deep_base_url,
                 temperature=deep_temperature,
                 max_tokens=deep_max_tokens,
-                timeout=deep_timeout
+                timeout=deep_timeout,
+                **deep_kwargs,
             )
             self.quick_thinking_llm = ChatDeepSeek(
                 model=self.config["quick_think_llm"],
-                api_key=deepseek_api_key,
-                base_url=deepseek_base_url,
+                api_key=quick_api_key,
+                base_url=quick_base_url,
                 temperature=quick_temperature,
                 max_tokens=quick_max_tokens,
-                timeout=quick_timeout
+                timeout=quick_timeout,
+                **quick_kwargs,
             )
 
             logger.info(f"✅ [DeepSeek] 已启用token统计功能并应用用户配置的模型参数")

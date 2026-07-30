@@ -91,6 +91,14 @@ class ChatDeepSeek(ChatOpenAI):
                     "DeepSeek API密钥未找到。请在 Web 界面配置 API Key "
                     "(设置 -> 大模型厂家) 或设置 DEEPSEEK_API_KEY 环境变量。"
                 )
+
+        # V4 默认保持非思考模式，具体角色可通过 extra_body 显式开启。
+        if model.lower().startswith("deepseek-v4-"):
+            extra_body = dict(kwargs.pop("extra_body", {}) or {})
+            extra_body.setdefault("thinking", {"type": "disabled"})
+            kwargs["extra_body"] = extra_body
+            thinking_type = extra_body.get("thinking", {}).get("type", "disabled")
+            logger.info(f"DeepSeek V4 思考模式: {thinking_type}")
         
         # 初始化父类
         super().__init__(
@@ -103,6 +111,50 @@ class ChatDeepSeek(ChatOpenAI):
         )
         
         self.model_name = model
+
+    def _get_request_payload(
+        self,
+        input_: Any,
+        *,
+        stop: Optional[List[str]] = None,
+        **kwargs: Any,
+    ) -> dict:
+        """构造请求，并恢复 DeepSeek 工具调用所需的推理上下文。"""
+        payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+
+        request_messages = payload.get("messages")
+        if not isinstance(request_messages, list):
+            return payload
+
+        source_messages = self._convert_input(input_).to_messages()
+        for source, target in zip(source_messages, request_messages):
+            if not isinstance(source, AIMessage) or not isinstance(target, dict):
+                continue
+
+            reasoning_content = source.additional_kwargs.get("reasoning_content")
+            if reasoning_content is not None:
+                target["reasoning_content"] = reasoning_content
+
+        return payload
+
+    def _create_chat_result(
+        self,
+        response: Any,
+        generation_info: Optional[dict] = None,
+    ) -> ChatResult:
+        """保存 DeepSeek 返回的 reasoning_content，供后续工具轮次回传。"""
+        result = super()._create_chat_result(response, generation_info)
+        response_dict = response if isinstance(response, dict) else response.model_dump()
+
+        for choice, generation in zip(
+            response_dict.get("choices") or [],
+            result.generations,
+        ):
+            reasoning_content = choice.get("message", {}).get("reasoning_content")
+            if reasoning_content is not None:
+                generation.message.additional_kwargs["reasoning_content"] = reasoning_content
+
+        return result
         
     def _generate(
         self,
