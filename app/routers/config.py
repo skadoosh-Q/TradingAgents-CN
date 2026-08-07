@@ -966,7 +966,7 @@ async def get_llm_configs(
         )
 
 
-@router.delete("/llm/{provider}/{model_name}")
+@router.delete("/llm/{provider}/{model_name:path}")
 async def delete_llm_config(
     provider: str,
     model_name: str,

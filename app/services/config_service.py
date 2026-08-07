@@ -586,15 +586,20 @@ class ConfigService:
 
             # 打印所有现有配置
             for i, llm in enumerate(config.llm_configs):
-                print(f"   {i+1}. provider: {llm.provider.value}, model_name: {llm.model_name}")
+                llm_provider = getattr(llm.provider, "value", llm.provider)
+                print(f"   {i+1}. provider: {llm_provider}, model_name: {llm.model_name}")
 
             # 查找并删除指定的LLM配置
             original_count = len(config.llm_configs)
 
-            # 使用更宽松的匹配条件
+            normalized_provider = provider.strip().lower()
             config.llm_configs = [
                 llm for llm in config.llm_configs
-                if not (str(llm.provider.value).lower() == provider.lower() and llm.model_name == model_name)
+                if not (
+                    str(getattr(llm.provider, "value", llm.provider)).strip().lower()
+                    == normalized_provider
+                    and llm.model_name == model_name
+                )
             ]
 
             new_count = len(config.llm_configs)
@@ -603,6 +608,20 @@ class ConfigService:
             if new_count == original_count:
                 print(f"❌ 没有找到匹配的配置: {provider}/{model_name}")
                 return False  # 没有找到要删除的配置
+
+            # 系统的模型选择只保存 model_name。仅当没有其他同名配置时，
+            # 才清理默认/快速/深度模型引用，避免留下无法使用的孤儿配置。
+            model_still_exists = any(
+                llm.model_name == model_name for llm in config.llm_configs
+            )
+            if not model_still_exists:
+                if config.default_llm == model_name:
+                    config.default_llm = None
+
+                for setting_key in ("quick_analysis_model", "deep_analysis_model"):
+                    if config.system_settings.get(setting_key) == model_name:
+                        config.system_settings[setting_key] = ""
+                        print(f"🧹 已清理模型引用: {setting_key}={model_name}")
 
             # 保存更新后的配置
             save_result = await self.save_system_config(config)
@@ -862,8 +881,17 @@ class ConfigService:
                 return False
 
             # 查找并更新对应的LLM配置
+            normalized_provider = str(
+                getattr(llm_config.provider, "value", llm_config.provider)
+            ).strip().lower()
             for i, existing_config in enumerate(config.llm_configs):
-                if existing_config.model_name == llm_config.model_name:
+                existing_provider = str(
+                    getattr(existing_config.provider, "value", existing_config.provider)
+                ).strip().lower()
+                if (
+                    existing_provider == normalized_provider
+                    and existing_config.model_name == llm_config.model_name
+                ):
                     config.llm_configs[i] = llm_config
                     break
             else:

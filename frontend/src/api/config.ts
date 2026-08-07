@@ -305,7 +305,10 @@ export const configApi = {
 
   // 删除大模型配置
   deleteLLMConfig(provider: string, modelName: string): Promise<{ message: string }> {
-    return ApiClient.delete(`/api/config/llm/${provider}/${modelName}`)
+    const providerPath = encodeURIComponent(provider)
+    // 后端使用 path 参数接收模型名，保留聚合平台模型名中的层级分隔符。
+    const modelPath = modelName.split('/').map(encodeURIComponent).join('/')
+    return ApiClient.delete(`/api/config/llm/${providerPath}/${modelPath}`)
   },
 
   // 设置默认大模型
