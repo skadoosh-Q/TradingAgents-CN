@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 class UnifiedNewsAnalyzer:
     """统一新闻分析器，整合所有新闻获取逻辑"""
 
-    RECENT_NEWS_DAYS = 7
     CONTEXT_NEWS_DAYS = 30
     
     def __init__(self, toolkit):
@@ -110,12 +109,22 @@ class UnifiedNewsAnalyzer:
         except (TypeError, ValueError):
             return datetime.now()
 
+    @staticmethod
+    def _get_primary_window_start(analysis_datetime: datetime) -> datetime:
+        """返回分析日所在周的上一个周一。"""
+        current_week_monday = analysis_datetime - timedelta(
+            days=analysis_datetime.weekday()
+        )
+        return current_week_monday - timedelta(days=7)
+
     def _get_news_from_database(
         self,
         stock_code: str,
         max_news: int = 10,
         analysis_date: str = "",
-        max_age_days: int = RECENT_NEWS_DAYS,
+        max_age_days: int = CONTEXT_NEWS_DAYS,
+        window_start: datetime = None,
+        freshness: str = "context",
     ) -> str:
         """
         从数据库获取新闻
@@ -145,7 +154,7 @@ class UnifiedNewsAnalyzer:
                                    .replace('.XSHE', '').replace('.XSHG', '').replace('.HK', '')
 
             as_of = self._resolve_analysis_date(analysis_date)
-            start_time = as_of - timedelta(days=max_age_days)
+            start_time = window_start or (as_of - timedelta(days=max_age_days))
             end_time = as_of + timedelta(days=1)
             query = {
                 '$and': [
@@ -168,8 +177,8 @@ class UnifiedNewsAnalyzer:
             news_items = list(cursor)
             if news_items:
                 logger.info(
-                    f"[统一新闻工具] 📊 找到分析日前{max_age_days}天内新闻 "
-                    f"{len(news_items)} 条"
+                    f"[统一新闻工具] 📊 找到 {start_time:%Y-%m-%d} 至 "
+                    f"{as_of:%Y-%m-%d} 新闻 {len(news_items)} 条"
                 )
 
             if not news_items:
@@ -177,14 +186,13 @@ class UnifiedNewsAnalyzer:
                 return ""
 
             # 格式化新闻
-            freshness_label = (
-                "近期新闻"
-                if max_age_days <= self.RECENT_NEWS_DAYS
-                else "历史背景新闻"
-            )
+            freshness_label = "核心窗口新闻" if freshness == "recent" else "历史背景新闻"
             report = f"# {stock_code} {freshness_label} (数据库缓存)\n\n"
             report += f"📅 分析日期: {as_of.strftime('%Y-%m-%d')}\n"
-            report += f"⏳ 最大新闻年龄: {max_age_days}天\n"
+            report += (
+                f"🗓️ 新闻窗口: {start_time.strftime('%Y-%m-%d')} "
+                f"至 {as_of.strftime('%Y-%m-%d')}\n"
+            )
             report += f"📅 查询时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
             report += f"📊 新闻数量: {len(news_items)} 条\n\n"
 
@@ -331,61 +339,52 @@ class UnifiedNewsAnalyzer:
         analysis_datetime = self._resolve_analysis_date(analysis_date)
         curr_date = analysis_datetime.strftime("%Y-%m-%d")
         is_current_analysis = abs((datetime.now().date() - analysis_datetime.date()).days) <= 1
+        primary_window_start = self._get_primary_window_start(analysis_datetime)
 
-        # 优先级0: 从数据库获取新闻（最高优先级）
+        # 当前日期分析先刷新新闻，再从数据库读取刷新结果与既有缓存的合并集。
+        sync_succeeded = False
+        if is_current_analysis:
+            try:
+                logger.info(
+                    f"[统一新闻工具] 📡 分析前刷新 {stock_code} 新闻，随后合并数据库缓存..."
+                )
+                sync_succeeded = self._sync_news_from_akshare(stock_code, max_news)
+                if sync_succeeded:
+                    logger.info(f"[统一新闻工具] ✅ 新闻刷新完成")
+                else:
+                    logger.warning(f"[统一新闻工具] ⚠️ 新闻刷新未写入新数据，将继续使用缓存")
+            except Exception as sync_error:
+                logger.warning(f"[统一新闻工具] ⚠️ 新闻刷新失败，将继续使用缓存: {sync_error}")
+        else:
+            logger.info(
+                f"[统一新闻工具] 历史分析日期 {curr_date}，跳过实时新闻同步"
+            )
+
+        # 优先级0: 查询上周一至分析日的数据库合并结果
         try:
-            logger.info(f"[统一新闻工具] 🔍 优先从数据库获取 {stock_code} 的新闻...")
+            logger.info(
+                f"[统一新闻工具] 🔍 查询核心新闻窗口 "
+                f"{primary_window_start:%Y-%m-%d} 至 {curr_date}..."
+            )
             db_news = self._get_news_from_database(
                 stock_code,
                 max_news,
                 curr_date,
-                self.RECENT_NEWS_DAYS,
+                window_start=primary_window_start,
+                freshness="recent",
             )
             if db_news:
-                logger.info(f"[统一新闻工具] ✅ 数据库新闻获取成功: {len(db_news)} 字符")
+                if sync_succeeded:
+                    source = "数据库缓存(实时刷新后合并)"
+                elif is_current_analysis:
+                    source = "数据库缓存(刷新失败，使用现有缓存)"
+                else:
+                    source = "数据库缓存(历史分析)"
+                logger.info(f"[统一新闻工具] ✅ 合并新闻获取成功: {len(db_news)} 字符")
                 return self._format_news_result(
-                    db_news, "数据库缓存", model_info, curr_date, "recent"
+                    db_news, source, model_info, curr_date, "recent"
                 )
-            else:
-                logger.info(f"[统一新闻工具] ⚠️ 数据库中没有 {stock_code} 的新闻，尝试同步...")
-
-                # 🔥 数据库没有数据时，调用同步服务同步新闻
-                try:
-                    if not is_current_analysis:
-                        logger.info(
-                            f"[统一新闻工具] 历史分析日期 {curr_date}，跳过实时新闻同步"
-                        )
-                        raise LookupError("历史分析不刷新实时新闻")
-                    logger.info(f"[统一新闻工具] 📡 调用同步服务同步 {stock_code} 的新闻...")
-                    synced_news = self._sync_news_from_akshare(stock_code, max_news)
-
-                    if synced_news:
-                        logger.info(f"[统一新闻工具] ✅ 同步成功，重新从数据库获取...")
-                        # 重新从数据库获取
-                        db_news = self._get_news_from_database(
-                            stock_code,
-                            max_news,
-                            curr_date,
-                            self.RECENT_NEWS_DAYS,
-                        )
-                        if db_news:
-                            logger.info(f"[统一新闻工具] ✅ 同步后数据库新闻获取成功: {len(db_news)} 字符")
-                            return self._format_news_result(
-                                db_news,
-                                "数据库缓存(新同步)",
-                                model_info,
-                                curr_date,
-                                "recent",
-                            )
-                    else:
-                        logger.warning(f"[统一新闻工具] ⚠️ 同步服务未返回新闻数据")
-
-                except LookupError:
-                    pass
-                except Exception as sync_error:
-                    logger.warning(f"[统一新闻工具] ⚠️ 同步服务调用失败: {sync_error}")
-
-                logger.info(f"[统一新闻工具] ⚠️ 同步后仍无数据，尝试其他数据源...")
+            logger.info(f"[统一新闻工具] ⚠️ 核心新闻窗口无数据，尝试其他数据源...")
         except Exception as e:
             logger.warning(f"[统一新闻工具] 数据库新闻获取失败: {e}")
 
@@ -459,17 +458,18 @@ class UnifiedNewsAnalyzer:
         except Exception as e:
             logger.warning(f"[统一新闻工具] OpenAI新闻获取失败: {e}")
 
-        # 最后才允许使用8-30天内的数据，并明确标记为历史背景。
+        # 最后才允许使用30天内的数据，并明确标记为历史背景。
         try:
             context_news = self._get_news_from_database(
                 stock_code,
                 max_news,
                 curr_date,
                 self.CONTEXT_NEWS_DAYS,
+                freshness="context",
             )
             if context_news:
                 logger.warning(
-                    f"[统一新闻工具] ⚠️ 未获取到近期新闻，使用30天内历史背景"
+                    f"[统一新闻工具] ⚠️ 核心窗口无新闻，使用30天内历史背景"
                 )
                 return self._format_news_result(
                     context_news,
@@ -658,7 +658,7 @@ class UnifiedNewsAnalyzer:
                 logger.info(f"[统一新闻工具] 🔧 Google模型最终长度优化，内容长度: {len(news_content)}字符")
         
         freshness_text = (
-            "近期有效新闻，可用于评估当前催化与市场情绪"
+            "核心新闻窗口（上周一至分析日），可用于评估近期催化与市场情绪"
             if freshness == "recent"
             else "仅限历史背景，不得作为当前催化剂或短期交易依据"
         )

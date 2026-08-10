@@ -41,6 +41,44 @@ def test_database_query_is_bounded_by_analysis_date():
     assert time_filter["$lt"] == datetime(2026, 7, 31)
 
 
+def test_primary_window_starts_on_previous_monday():
+    analyzer = UnifiedNewsAnalyzer(Mock())
+
+    assert analyzer._get_primary_window_start(datetime(2026, 8, 10)) == datetime(
+        2026, 8, 3
+    )
+    assert analyzer._get_primary_window_start(datetime(2026, 8, 12)) == datetime(
+        2026, 8, 3
+    )
+    assert analyzer._get_primary_window_start(datetime(2026, 8, 16)) == datetime(
+        2026, 8, 3
+    )
+
+
+def test_current_analysis_refreshes_before_reading_merged_database_news():
+    analyzer = UnifiedNewsAnalyzer(Mock(spec=[]))
+    events = []
+
+    def sync_news(*_args):
+        events.append("sync")
+        return True
+
+    def read_news(*_args, **_kwargs):
+        events.append("database")
+        return "刷新后合并新闻"
+
+    analyzer._sync_news_from_akshare = Mock(side_effect=sync_news)
+    analyzer._get_news_from_database = Mock(side_effect=read_news)
+
+    result = analyzer._get_a_share_news(
+        "000661", 10, analysis_date=datetime.now().strftime("%Y-%m-%d")
+    )
+
+    assert events == ["sync", "database"]
+    assert "数据库缓存(实时刷新后合并)" in result
+    assert "刷新后合并新闻" in result
+
+
 def test_historical_analysis_does_not_refresh_or_call_live_sources():
     toolkit = Mock(spec=[])
     analyzer = UnifiedNewsAnalyzer(toolkit)
