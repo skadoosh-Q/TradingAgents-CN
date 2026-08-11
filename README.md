@@ -12,6 +12,22 @@
 
 面向中文用户的**多智能体与大模型股票分析学习平台**。帮助你系统化学习如何使用多智能体交易框架与 AI 大模型进行合规的股票研究与策略实验，不提供实盘交易指令，平台定位为学习与研究用途。
 
+## 已二次开发
+已基于原项目的`pro/main`分支`v2.0.1`使用`AI`二次开发。
+- 本地部署使用不校验appToken。
+- 新闻的获取，失效取"上周一至分析日";分析时先获取最新新闻合并到数据库;近期无新闻时允许提供 30 天历史背景，但明确禁止当作近期催化剂。
+- `DeepSeek V4`的兼容问题。
+- 单股分析时实时返回分析师结果报告。
+- 大模型配置删除时按“厂家 + 模型名”删除，避免无法删除模型的情况出现。
+- 大盘分析和板块分析需要的数据依赖Tushare的付费积分，现在修改为内部接口实现 
+
+> 新增独立免费数据接口：[free_china_market.py]    
+> 大盘分析改为内部调用免费接口：[index_tools.py]    
+> 板块分析改为内部调用免费接口：[sector_tools.py]   
+> 中国市场概览不再直接依赖 Tushare：[china_market_overview.py]      
+
+- 分析页面模型选择时本地记住。
+
 ## 🙏 致敬源项目
 
 感谢 [Tauric Research](https://github.com/TauricResearch) 团队创造的革命性多智能体交易框架 [TradingAgents](https://github.com/TauricResearch/TradingAgents)！

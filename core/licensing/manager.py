@@ -53,6 +53,14 @@ class LicenseManager:
     
     def _load_license(self) -> None:
         """加载许可证"""
+        if os.getenv("LOCAL_LICENSE_BYPASS", "false").lower() in {"1", "true", "yes", "on"}:
+            self._license = License(
+                id="local-self-hosted",
+                tier=LicenseTier.ENTERPRISE,
+                features=TIER_FEATURES[LicenseTier.ENTERPRISE],
+            )
+            return
+
         license_path = Path(self.LICENSE_FILE)
         
         if license_path.exists():
@@ -167,4 +175,3 @@ class LicenseManager:
             return max(0, max_value - current_value)
         
         return 999999
-

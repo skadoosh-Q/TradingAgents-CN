@@ -3,7 +3,7 @@
  * 股票分析API
  */
 
-import { request, type ApiResponse } from './request'
+import { request, type ApiResponse, type RequestConfig } from './request'
 
 // 分析相关类型定义
 export interface AnalysisRequest {
@@ -37,6 +37,9 @@ export interface SingleAnalysisRequest {
     language?: string
     quick_analysis_model?: string
     deep_analysis_model?: string
+    is_holding?: boolean
+    holding_shares?: number | null
+    holding_cost_price?: number | null
     engine?: AnalysisEngineType
     workflow_id?: string
   }
@@ -134,7 +137,9 @@ export const analysisApi = {
 
   // 获取任务状态
   getTaskStatus(taskId: string): Promise<ApiResponse<any>> {
-    return request.get(`/api/analysis/tasks/${taskId}/status`)
+    return request.get(`/api/analysis/tasks/${taskId}/status`, {
+      skipErrorHandler: true
+    } as RequestConfig)
   },
 
   // 获取分析进度
@@ -486,7 +491,4 @@ export const getStockPlaceholder = (market: string): string => {
   }
   return placeholders[market] ?? '输入股票代码'
 }
-
-
-
 

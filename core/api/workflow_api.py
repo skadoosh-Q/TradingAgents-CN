@@ -587,6 +587,10 @@ class WorkflowAPI:
         """
         prepared = dict(inputs)
 
+        # 单股分析持仓背景统一为工作流状态字段，供决策阶段使用
+        from core.agents.holding_context import normalize_holding_info
+        prepared["holding_info"] = normalize_holding_info(prepared)
+
         # 从输入中解析辩论轮数
         depth_mapping = {
             "快速": {"debate": 1, "risk": 1},
@@ -682,4 +686,3 @@ class WorkflowAPI:
             }
         except Exception as e:
             return {"is_valid": False, "errors": [str(e)], "warnings": []}
-

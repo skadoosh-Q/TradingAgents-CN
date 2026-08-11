@@ -12,17 +12,17 @@ class TestIndexTools:
     """测试指数分析工具函数"""
     
     @pytest.fixture
-    def mock_tushare_provider(self):
-        """模拟 Tushare 提供器"""
+    def mock_market_provider(self):
+        """模拟免费市场数据接口"""
         mock_provider = Mock()
         mock_provider.is_available.return_value = True
         return mock_provider
     
     @pytest.mark.asyncio
-    async def test_get_index_trend(self, mock_tushare_provider):
+    async def test_get_index_trend(self, mock_market_provider):
         """测试指数走势分析"""
         # 模拟指数日线数据
-        mock_tushare_provider.get_index_daily = AsyncMock(return_value=pd.DataFrame({
+        mock_market_provider.get_index_daily = AsyncMock(return_value=pd.DataFrame({
             'trade_date': [f'202412{i:02d}' for i in range(1, 22)],
             'close': [3000 + i * 10 for i in range(21)],
             'high': [3010 + i * 10 for i in range(21)],
@@ -30,7 +30,7 @@ class TestIndexTools:
             'pct_chg': [0.5] * 21
         }))
         
-        with patch('core.tools.index_tools._get_tushare_provider', return_value=mock_tushare_provider):
+        with patch('core.tools.index_tools._get_market_data_provider', return_value=mock_market_provider):
             from core.tools.index_tools import get_index_trend
             
             result = await get_index_trend("2024-12-21")
@@ -39,40 +39,39 @@ class TestIndexTools:
             assert "上证指数" in result or "暂无数据" in result
     
     @pytest.mark.asyncio
-    async def test_get_market_breadth(self, mock_tushare_provider):
+    async def test_get_market_breadth(self, mock_market_provider):
         """测试市场宽度分析"""
-        mock_tushare_provider.get_daily_info = AsyncMock(return_value=pd.DataFrame({
-            'trade_date': ['20241221'],
-            'up_count': [2500],
-            'down_count': [1500],
-            'amount': [500000000000]  # 5000亿
-        }))
+        mock_market_provider.get_market_activity = AsyncMock(return_value={
+            'up_count': 2500, 'down_count': 1500, 'flat_count': 100,
+            'limit_up_count': 50, 'limit_down_count': 5,
+            'suspended_count': 0, 'activity_rate': 60.5,
+            'data_time': '2024-12-21 15:00:00',
+        })
         
-        with patch('core.tools.index_tools._get_tushare_provider', return_value=mock_tushare_provider):
+        with patch('core.tools.index_tools._get_market_data_provider', return_value=mock_market_provider):
             from core.tools.index_tools import get_market_breadth
             
             result = await get_market_breadth("2024-12-21")
             
             assert "市场宽度分析" in result
-            assert "涨跌统计" in result or "暂无" in result
+            assert "涨跌分布" in result or "暂无" in result
     
     @pytest.mark.asyncio
-    async def test_get_market_environment(self, mock_tushare_provider):
+    async def test_get_market_environment(self, mock_market_provider):
         """测试市场环境评估"""
-        mock_tushare_provider.get_index_dailybasic = AsyncMock(return_value=pd.DataFrame({
-            'ts_code': ['000001.SH'],
-            'pe': [12.5],
-            'pb': [1.2],
-            'turnover_rate': [0.8],
-            'total_mv': [50000000000000]  # 50万亿
+        mock_market_provider.get_market_valuation = AsyncMock(return_value=pd.DataFrame({
+            'trade_date': ['20241220'],
+            'pe_ttm_median': [25.5],
+            'pe_ttm_mean': [38.2],
+            'pe_lyr_median': [26.1],
         }))
-        mock_tushare_provider.get_index_daily = AsyncMock(return_value=pd.DataFrame({
+        mock_market_provider.get_index_daily = AsyncMock(return_value=pd.DataFrame({
             'trade_date': [f'202412{i:02d}' for i in range(1, 22)],
             'close': [3000 + i for i in range(21)],
             'pct_chg': [0.5, -0.3, 0.2, -0.1, 0.4] * 4 + [0.3]
         }))
         
-        with patch('core.tools.index_tools._get_tushare_provider', return_value=mock_tushare_provider):
+        with patch('core.tools.index_tools._get_market_data_provider', return_value=mock_market_provider):
             from core.tools.index_tools import get_market_environment
             
             result = await get_market_environment("2024-12-21")
@@ -80,17 +79,17 @@ class TestIndexTools:
             assert "市场环境评估" in result
     
     @pytest.mark.asyncio
-    async def test_identify_market_cycle(self, mock_tushare_provider):
+    async def test_identify_market_cycle(self, mock_market_provider):
         """测试市场周期识别"""
         # 创建模拟的上涨趋势数据
-        mock_tushare_provider.get_index_daily = AsyncMock(return_value=pd.DataFrame({
+        mock_market_provider.get_index_daily = AsyncMock(return_value=pd.DataFrame({
             'trade_date': [f'2024{(i//30+1):02d}{(i%30+1):02d}' for i in range(120)],
             'close': [3000 + i * 5 for i in range(120)],
             'high': [3010 + i * 5 for i in range(120)],
             'low': [2990 + i * 5 for i in range(120)],
         }))
         
-        with patch('core.tools.index_tools._get_tushare_provider', return_value=mock_tushare_provider):
+        with patch('core.tools.index_tools._get_market_data_provider', return_value=mock_market_provider):
             from core.tools.index_tools import identify_market_cycle
             
             result = await identify_market_cycle("2024-12-21")
@@ -131,6 +130,44 @@ class TestIndexAnalystAgent:
             assert result["index_report"] == mock_report
 
 
+class TestIndexReportCache:
+    """测试大盘报告缓存版本隔离与失败报告过滤。"""
+
+    def test_cache_uses_free_data_namespace(self):
+        from core.agents.adapters import index_analyst_v2 as module
+
+        cache = Mock()
+        cache.find_cached_analysis_report.return_value = None
+
+        with patch.object(module, "_get_cache_manager", return_value=cache):
+            assert module._get_cached_index_report("2026-08-11") is None
+
+        assert cache.find_cached_analysis_report.call_args.kwargs["symbol"] == "market_v2_free_v1"
+
+    def test_failed_data_report_is_not_cached(self):
+        from core.agents.adapters import index_analyst_v2 as module
+
+        cache = Mock()
+        report = "本次分析因数据源不可用，无法获取任何有效的市场数据。" * 10
+
+        with patch.object(module, "_get_cache_manager", return_value=cache):
+            assert module._save_index_report_to_cache("2026-08-11", report) is False
+
+        cache.save_analysis_report.assert_not_called()
+
+    def test_failed_cached_report_is_ignored(self):
+        from core.agents.adapters import index_analyst_v2 as module
+
+        cache = Mock()
+        cache.find_cached_analysis_report.return_value = "cached-key"
+        cache.load_analysis_report.return_value = (
+            "受限于数据源连接问题及Tushare积分权限限制，绝大多数数据维度未能成功获取。" * 5
+        )
+
+        with patch.object(module, "_get_cache_manager", return_value=cache):
+            assert module._get_cached_index_report("2026-08-11") is None
+
+
 class TestAgentStateIndexField:
     """测试 AgentState 中的 index_report 字段"""
     
@@ -145,4 +182,3 @@ class TestAgentStateIndexField:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

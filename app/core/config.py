@@ -147,6 +147,10 @@ class Settings(BaseSettings):
     # 这样可以防止用户通过修改环境变量搭建假服务器绕过许可证验证
     LICENSE_SERVICE_TIMEOUT: int = Field(default=10, description="授权服务请求超时(秒)")
     LICENSE_CACHE_TTL: int = Field(default=300, description="授权信息缓存时间(秒)")
+    LOCAL_LICENSE_BYPASS: bool = Field(
+        default=False,
+        description="自托管部署跳过 App Token 验证并开放全部本地功能"
+    )
 
     # SSE 配置
     SSE_POLL_TIMEOUT_SECONDS: float = Field(default=1.0)

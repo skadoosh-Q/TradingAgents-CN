@@ -12,48 +12,40 @@ class TestSectorTools:
     """测试板块分析工具函数"""
     
     @pytest.fixture
-    def mock_tushare_provider(self):
-        """模拟 Tushare 提供器"""
+    def mock_market_provider(self):
+        """模拟免费市场数据接口"""
         mock_provider = Mock()
         mock_provider.is_available.return_value = True
         mock_provider._normalize_ts_code.side_effect = lambda x: f"{x}.SZ" if not '.' in x else x
         return mock_provider
     
     @pytest.mark.asyncio
-    async def test_get_stock_sector_info(self, mock_tushare_provider):
+    async def test_get_stock_sector_info(self, mock_market_provider):
         """测试获取股票板块信息"""
         # 设置模拟返回值
-        mock_tushare_provider.get_stock_industry = AsyncMock(return_value="银行")
-        mock_tushare_provider.get_ths_member = AsyncMock(return_value=pd.DataFrame({
-            'ts_code': ['885691.TI', '885611.TI'],
-            'name': ['银行', '金融科技']
-        }))
+        mock_market_provider.get_stock_industry = AsyncMock(return_value="银行")
         
-        with patch('core.tools.sector_tools._get_tushare_provider', return_value=mock_tushare_provider):
+        with patch('core.tools.sector_tools._get_market_data_provider', return_value=mock_market_provider):
             from core.tools.sector_tools import get_stock_sector_info
             
             result = await get_stock_sector_info("000001")
             
             assert result['ticker'] == "000001"
             assert result['industry'] == "银行"
-            assert len(result['sectors']) == 2
+            assert len(result['sectors']) == 1
             assert result['error'] is None
     
     @pytest.mark.asyncio
-    async def test_get_sector_performance(self, mock_tushare_provider):
+    async def test_get_sector_performance(self, mock_market_provider):
         """测试板块表现分析"""
-        mock_tushare_provider.get_stock_industry = AsyncMock(return_value="银行")
-        mock_tushare_provider.get_ths_member = AsyncMock(return_value=pd.DataFrame({
-            'ts_code': ['885691.TI'],
-            'name': ['银行']
-        }))
-        mock_tushare_provider.get_ths_daily = AsyncMock(return_value=pd.DataFrame({
+        mock_market_provider.get_stock_industry = AsyncMock(return_value="银行")
+        mock_market_provider.get_sector_daily = AsyncMock(return_value=pd.DataFrame({
             'trade_date': ['20241201', '20241202'],
             'close': [100, 105],
             'pct_change': [0, 5.0]
         }))
         
-        with patch('core.tools.sector_tools._get_tushare_provider', return_value=mock_tushare_provider):
+        with patch('core.tools.sector_tools._get_market_data_provider', return_value=mock_market_provider):
             from core.tools.sector_tools import get_sector_performance
             
             result = await get_sector_performance("000001", "2024-12-02")
@@ -62,16 +54,18 @@ class TestSectorTools:
             assert "银行" in result
     
     @pytest.mark.asyncio
-    async def test_get_sector_rotation(self, mock_tushare_provider):
+    async def test_get_sector_rotation(self, mock_market_provider):
         """测试板块轮动分析"""
-        mock_tushare_provider.get_moneyflow_ths = AsyncMock(return_value=pd.DataFrame({
-            'ts_code': ['885691.TI', '885611.TI'],
+        mock_market_provider.get_index_daily = AsyncMock(return_value=pd.DataFrame({
+            'trade_date': ['20241202'], 'close': [3000],
+        }))
+        mock_market_provider.get_sector_fund_flow = AsyncMock(return_value=pd.DataFrame({
             'name': ['银行', '科技'],
-            'net_amount': [50000, -30000],
+            'net_amount': [500000000, -300000000],
             'net_amount_rate': [2.5, -1.5]
         }))
         
-        with patch('core.tools.sector_tools._get_tushare_provider', return_value=mock_tushare_provider):
+        with patch('core.tools.sector_tools._get_market_data_provider', return_value=mock_market_provider):
             from core.tools.sector_tools import get_sector_rotation
             
             result = await get_sector_rotation("2024-12-02")
@@ -130,4 +124,3 @@ class TestAgentStateExtension:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

@@ -6,7 +6,6 @@
 
 import asyncio
 import logging
-import re
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 
@@ -46,10 +45,11 @@ MAIN_INDICES = {
 }
 
 
-def _get_tushare_provider():
-    """延迟导入获取 Tushare Provider"""
-    from tradingagents.dataflows.providers.china.tushare import get_tushare_provider
-    return get_tushare_provider()
+def _get_market_data_provider():
+    """获取独立的免费 A 股市场数据接口。"""
+    from core.data_sources import get_free_china_market_data
+
+    return get_free_china_market_data()
 
 
 async def _get_latest_trade_date(trade_date: str) -> str:
@@ -64,7 +64,7 @@ async def _get_latest_trade_date(trade_date: str) -> str:
     Returns:
         最新可用的交易日期 (YYYYMMDD格式)
     """
-    provider = _get_tushare_provider()
+    provider = _get_market_data_provider()
     # 清理日期字符串，去掉可能的时间部分
     trade_date_clean = _clean_date_string(trade_date).replace('-', '')
 
@@ -119,7 +119,7 @@ async def get_index_trend(
     Returns:
         指数走势分析报告
     """
-    provider = _get_tushare_provider()
+    provider = _get_market_data_provider()
     
     try:
         # 计算日期范围
@@ -161,6 +161,11 @@ async def get_index_trend(
             latest = daily_df.iloc[-1]
             today_pct = latest.get('pct_chg', 0)
             close_price = latest.get('close', 0)
+            latest_date = str(latest.get('trade_date', end_date_str))
+            latest_date_display = (
+                f"{latest_date[:4]}-{latest_date[4:6]}-{latest_date[6:8]}"
+                if len(latest_date) >= 8 else latest_date
+            )
             
             # 5日/20日/60日涨跌幅
             pct_5d = ((close_price / daily_df.iloc[-5]['close']) - 1) * 100 if len(daily_df) >= 5 else 0
@@ -185,7 +190,7 @@ async def get_index_trend(
                 f"  {trend_icon} {index_name}({index_code}): {close_price:.2f}"
             )
             report_lines.append(
-                f"      今日: {today_pct:+.2f}% | 5日: {pct_5d:+.2f}% | "
+                f"      {latest_date_display}: {today_pct:+.2f}% | 5日: {pct_5d:+.2f}% | "
                 f"20日: {pct_20d:+.2f}% | {trend}"
             )
         
@@ -206,95 +211,53 @@ async def get_market_breadth(trade_date: str) -> str:
     Returns:
         市场宽度分析报告
     """
-    provider = _get_tushare_provider()
+    provider = _get_market_data_provider()
 
     try:
-        # 获取最新可用的交易日
-        trade_date_clean = await _get_latest_trade_date(trade_date)
-        trade_date_formatted = f"{trade_date_clean[:4]}-{trade_date_clean[4:6]}-{trade_date_clean[6:8]}"
-
+        activity = await provider.get_market_activity()
         report_lines = [
             "",
             "📊 市场宽度分析",
             "=" * 50,
-            f"📅 日期: {trade_date_formatted}",
+            f"📅 分析日期: {_clean_date_string(trade_date)}",
             "",
         ]
+        if not activity:
+            report_lines.append("⚠️ 暂无市场宽度数据（免费数据源暂时不可用）")
+            return "\n".join(report_lines)
 
-        # 使用 daily_info API 获取市场整体统计
-        daily_info = await provider.get_daily_info(trade_date=trade_date_clean)
+        requested_date = _clean_date_string(trade_date).replace("-", "")
+        activity_date = str(activity.get("data_time", ""))[:10].replace("-", "")
+        if activity_date and activity_date != requested_date:
+            report_lines.append(
+                f"⚠️ 暂无 {trade_date} 的历史市场宽度，未使用 {activity_date} 的当前快照替代"
+            )
+            return "\n".join(report_lines)
 
-        if daily_info is not None and not daily_info.empty:
-            # 提取上海和深圳市场的数据
-            sh_market = daily_info[daily_info['ts_code'] == 'SH_MARKET']
-            sz_market = daily_info[daily_info['ts_code'] == 'SZ_MARKET']
+        up_count = activity["up_count"]
+        down_count = activity["down_count"]
+        flat_count = activity["flat_count"]
+        total_count = up_count + down_count + flat_count
+        up_ratio = up_count / total_count * 100 if total_count else 0
+        down_ratio = down_count / total_count * 100 if total_count else 0
+        breadth = up_count - down_count
 
-            # 成交统计
-            sh_amount = float(sh_market['amount'].iloc[0]) if len(sh_market) > 0 and 'amount' in sh_market.columns else 0
-            sz_amount = float(sz_market['amount'].iloc[0]) if len(sz_market) > 0 and 'amount' in sz_market.columns else 0
-            total_amount = sh_amount + sz_amount
-
-            # 成交量（处理 NaN 值）
-            import pandas as pd
-            sh_vol = float(sh_market['vol'].iloc[0]) if len(sh_market) > 0 and 'vol' in sh_market.columns and pd.notna(sh_market['vol'].iloc[0]) else 0
-            sz_vol = float(sz_market['vol'].iloc[0]) if len(sz_market) > 0 and 'vol' in sz_market.columns and pd.notna(sz_market['vol'].iloc[0]) else 0
-            total_vol = sh_vol + sz_vol
-
-            # 上市公司数量
-            sh_count = int(sh_market['com_count'].iloc[0]) if len(sh_market) > 0 and 'com_count' in sh_market.columns else 0
-            sz_count = int(sz_market['com_count'].iloc[0]) if len(sz_market) > 0 and 'com_count' in sz_market.columns else 0
-            total_count = sh_count + sz_count
-
-            report_lines.append("【市场规模】")
-            report_lines.append(f"  • 上市公司总数: {total_count} 家")
-            report_lines.append(f"    - 上海市场: {sh_count} 家")
-            report_lines.append(f"    - 深圳市场: {sz_count} 家")
-
-            report_lines.append("")
-            report_lines.append("【成交统计】")
-            report_lines.append(f"  • 总成交额: {total_amount:.2f} 亿元")
-            report_lines.append(f"    - 上海市场: {sh_amount:.2f} 亿元 ({sh_amount/total_amount*100:.1f}%)" if total_amount > 0 else "    - 上海市场: 0.00 亿元")
-            report_lines.append(f"    - 深圳市场: {sz_amount:.2f} 亿元 ({sz_amount/total_amount*100:.1f}%)" if total_amount > 0 else "    - 深圳市场: 0.00 亿元")
-            if total_vol > 0:
-                report_lines.append(f"  • 总成交量: {total_vol:.2f} 亿股")
-
-            # 成交活跃度判断
-            if total_amount > 0:
-                avg_amount_per_stock = total_amount / total_count if total_count > 0 else 0
-                if total_amount > 15000:
-                    activity = "极度活跃 🔥"
-                elif total_amount > 10000:
-                    activity = "活跃 📈"
-                elif total_amount > 7000:
-                    activity = "正常 📊"
-                elif total_amount > 5000:
-                    activity = "偏冷清 📉"
-                else:
-                    activity = "清淡 ❄️"
-                report_lines.append(f"  • 市场活跃度: {activity}")
-                report_lines.append(f"  • 平均每股成交: {avg_amount_per_stock:.2f} 亿元")
-        else:
-            # 方案2: 使用 daily_basic API 获取市场整体数据
-            daily_basic = await provider.get_daily_basic(trade_date=trade_date_clean)
-
-            if daily_basic is not None and not daily_basic.empty:
-                # 统计市值数据
-                total_mv = daily_basic['total_mv'].sum() / 100000000 if 'total_mv' in daily_basic.columns else 0
-                avg_turnover = daily_basic['turnover_rate'].mean() if 'turnover_rate' in daily_basic.columns else 0
-                stock_count = len(daily_basic)
-
-                report_lines.append("【市场概况】")
-                report_lines.append(f"  • 在交易股票数: {stock_count}")
-                report_lines.append(f"  • 总市值: {total_mv:.2f} 万亿")
-                report_lines.append(f"  • 平均换手率: {avg_turnover:.2f}%")
-
-                # 使用 PE 分布判断市场情绪
-                if 'pe' in daily_basic.columns:
-                    pe_median = daily_basic['pe'].dropna().median()
-                    report_lines.append(f"  • 市场中位数PE: {pe_median:.2f}")
-            else:
-                report_lines.append("⚠️ 暂无市场统计数据（可能需要更高的 Tushare 积分）")
-
+        report_lines.extend(
+            [
+                "【涨跌分布】",
+                f"  • 上涨: {up_count} 家 ({up_ratio:.1f}%)",
+                f"  • 下跌: {down_count} 家 ({down_ratio:.1f}%)",
+                f"  • 平盘: {flat_count} 家",
+                f"  • 涨跌家数差: {breadth:+d}",
+                "",
+                "【极端波动】",
+                f"  • 涨停: {activity['limit_up_count']} 家",
+                f"  • 跌停: {activity['limit_down_count']} 家",
+                f"  • 市场活跃度: {activity['activity_rate']:.2f}%",
+            ]
+        )
+        if activity.get("data_time"):
+            report_lines.append(f"  • 数据时间: {activity['data_time']}")
         return "\n".join(report_lines)
 
     except Exception as e:
@@ -312,7 +275,7 @@ async def get_market_environment(trade_date: str) -> str:
     Returns:
         市场环境评估报告
     """
-    provider = _get_tushare_provider()
+    provider = _get_market_data_provider()
 
     try:
         # 清理日期字符串（移除可能的时间部分）
@@ -325,30 +288,22 @@ async def get_market_environment(trade_date: str) -> str:
             "=" * 50,
             f"📅 日期: {trade_date_display}",
             "",
-            "【指数估值水平】",
+            "【A股整体估值水平】",
         ]
-
-        # 获取主要指数估值
-        for index_code, index_name in list(MAIN_INDICES.items())[:3]:
-            basic_df = await provider.get_index_dailybasic(
-                ts_code=index_code,
-                trade_date=trade_date_clean
+        valuation = await provider.get_market_valuation()
+        if valuation is not None and not valuation.empty:
+            available = valuation[valuation["trade_date"] <= trade_date_clean]
+            row = (available if not available.empty else valuation).iloc[-1]
+            report_lines.extend(
+                [
+                    f"  • 全A滚动PE中位数: {row.get('pe_ttm_median', 'N/A')}",
+                    f"  • 全A滚动PE均值: {row.get('pe_ttm_mean', 'N/A')}",
+                    f"  • 静态PE中位数: {row.get('pe_lyr_median', 'N/A')}",
+                    f"  • 估值数据日期: {row.get('trade_date', 'N/A')}",
+                ]
             )
-
-            if basic_df is None or basic_df.empty:
-                report_lines.append(f"  {index_name}: 暂无估值数据")
-                continue
-
-            row = basic_df.iloc[0]
-            pe = row.get('pe', row.get('pe_ttm', 'N/A'))
-            pb = row.get('pb', 'N/A')
-            turnover = row.get('turnover_rate', 'N/A')
-            total_mv = row.get('total_mv', 0)
-            total_mv_wan_yi = total_mv / 100000000 if total_mv else 0
-
-            report_lines.append(f"  {index_name}:")
-            report_lines.append(f"      PE: {pe} | PB: {pb} | 换手率: {turnover}%")
-            report_lines.append(f"      总市值: {total_mv_wan_yi:.2f} 万亿")
+        else:
+            report_lines.append("  ⚠️ 暂无可靠的免费估值数据")
 
         # 风险评估
         report_lines.append("")
@@ -392,7 +347,7 @@ async def identify_market_cycle(trade_date: str) -> str:
     Returns:
         市场周期判断报告
     """
-    provider = _get_tushare_provider()
+    provider = _get_market_data_provider()
 
     try:
         # 清理日期字符串，去掉可能的时间部分
@@ -554,157 +509,40 @@ async def get_north_flow(trade_date: str, lookback_days: int = 10) -> str:
     Returns:
         北向资金流向分析报告
     """
-    provider = _get_tushare_provider()
+    provider = _get_market_data_provider()
 
     try:
-        # 清理日期字符串，去掉可能的时间部分
-        trade_date_clean = _clean_date_string(trade_date).replace('-', '')
-        end_date = datetime.strptime(trade_date_clean, '%Y%m%d')
-        start_date = end_date - timedelta(days=lookback_days + 10)
-
-        df = await provider.get_hsgt_moneyflow(
-            start_date=start_date.strftime('%Y%m%d'),
-            end_date=trade_date_clean
-        )
-
+        df = await provider.get_northbound_summary()
         report_lines = [
             "",
-            "💰 北向资金流向分析",
+            "💰 沪深股通公开信息",
             "=" * 50,
-            f"📅 日期: {trade_date}",
+            f"📅 日期: {_clean_date_string(trade_date)}",
             "",
+            "【披露口径说明】",
+            "  • 2024-08-19起，交易所不再披露北向每日买入、卖出及净买入额",
+            "  • 免费接口中的净流入零值不代表真实资金为零，本报告不会据此判断外资方向",
         ]
-
         if df is None or df.empty:
-            report_lines.append("⚠️ 暂无北向资金数据（可能需要更高的 Tushare 积分）")
+            report_lines.append("  ⚠️ 暂未获取到沪深股通交易状态")
             return "\n".join(report_lines)
 
-        # 按日期排序
-        df = df.sort_values('trade_date', ascending=False)
-
-        # 🔑 确保数值列为数值类型（根据 Tushare 文档，这些字段应该是 float）
-        # 参考文档：https://tushare.pro/document/2?doc_id=47
-        # Tushare 返回的数据格式：hgt/sgt/north_money 都是 float 类型（百万元）
-        numeric_cols = ['hgt', 'sgt', 'ggt_ss', 'ggt_sz', 'north_money', 'south_money']
-        for col in numeric_cols:
-            if col in df.columns:
-                # 先尝试直接转换为数值类型
-                try:
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-                except Exception:
-                    # 如果直接转换失败，先清理格式错误
-                    # 处理可能的格式错误：如果包含多个小数点或数字被错误连接
-                    # 例如 "182490.64238444.93" -> 提取第一个有效数字 "182490.64"
-                    def clean_numeric_value(val):
-                        if pd.isna(val):
-                            return 0.0
-                        val_str = str(val).strip()
-                        # 移除逗号和空格
-                        val_str = val_str.replace(',', '').replace(' ', '')
-                        # 如果包含多个小数点，提取第一个完整的数字
-                        # 匹配模式：可选负号 + 数字 + 小数点 + 数字（第一个完整数字）
-                        match = re.match(r'(-?\d+\.\d{1,2})', val_str)
-                        if match:
-                            return float(match.group(1))
-                        # 如果没有小数点，尝试匹配整数
-                        match = re.match(r'(-?\d+)', val_str)
-                        if match:
-                            return float(match.group(1))
-                        return 0.0
-                    
-                    df[col] = df[col].apply(clean_numeric_value)
-                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-        
-        # 重新计算 north_money 和 south_money（确保使用清理后的数值）
-        if 'hgt' in df.columns and 'sgt' in df.columns:
-            df['north_money'] = df['hgt'].fillna(0) + df['sgt'].fillna(0)
-        if 'ggt_ss' in df.columns and 'ggt_sz' in df.columns:
-            df['south_money'] = df['ggt_ss'].fillna(0) + df['ggt_sz'].fillna(0)
-
-        # 最新一天数据
-        latest = df.iloc[0]
-        
-        # 🔑 安全转换函数：从 DataFrame 中安全提取数值
-        def safe_float(value, default=0.0):
-            """安全转换为浮点数，处理可能的格式错误"""
-            if value is None or pd.isna(value):
-                return default
-            try:
-                # 如果已经是数值类型，直接返回
-                if isinstance(value, (int, float)):
-                    return float(value)
-                # 如果是 pandas Series，取第一个值
-                if isinstance(value, pd.Series):
-                    value = value.iloc[0] if len(value) > 0 else default
-                    if pd.isna(value):
-                        return default
-                    return float(value)
-                # 如果是字符串，清理后转换
-                if isinstance(value, str):
-                    value = value.strip()
-                    # 处理格式错误：移除多余的小数部分（如 "182490.64238444.93" -> "182490.64"）
-                    value = re.sub(r'(\d+\.\d+)\.\d+', r'\1', value)
-                    value = value.replace(',', '').replace(' ', '')
-                return float(value)
-            except (ValueError, TypeError) as e:
-                logger.warning(f"⚠️ 无法转换数值: {value} (类型: {type(value)}), 错误: {e}, 使用默认值 {default}")
-                return default
-        
-        # 🔑 使用 .iloc[0] 确保获取单个值，而不是 Series
-        hgt = safe_float(latest['hgt'] if 'hgt' in latest.index else 0)
-        sgt = safe_float(latest['sgt'] if 'sgt' in latest.index else 0)
-        north_money = safe_float(latest['north_money'] if 'north_money' in latest.index else 0)
-
-        report_lines.append("【今日北向资金】")
-        report_lines.append(f"  • 沪股通: {hgt/10000:.2f} 亿元")
-        report_lines.append(f"  • 深股通: {sgt/10000:.2f} 亿元")
-        flow_icon = "🔴" if north_money > 0 else "🟢"
-        flow_text = "净流入" if north_money > 0 else "净流出"
-        report_lines.append(f"  • 北向合计: {flow_icon} {abs(north_money)/10000:.2f} 亿元 ({flow_text})")
-
-        # 近N日统计
-        if len(df) >= 5:
-            # 🔑 直接使用清理后的数值列（已经是 float 类型）
-            recent_5 = df.head(5)['north_money'].sum()
-            report_lines.append("")
-            report_lines.append("【近期趋势】")
-            report_lines.append(f"  • 近5日累计: {recent_5/10000:.2f} 亿元")
-
-            if len(df) >= 10:
-                recent_10 = df.head(10)['north_money'].sum()
-                report_lines.append(f"  • 近10日累计: {recent_10/10000:.2f} 亿元")
-
-            # 连续流入/流出天数
-            consecutive = 0
-            direction = "流入" if north_money > 0 else "流出"
-            for _, row in df.iterrows():
-                # 🔑 直接使用清理后的数值（已经是 float 类型）
-                row_north_money = float(row['north_money']) if pd.notna(row['north_money']) else 0.0
-                if (direction == "流入" and row_north_money > 0) or \
-                   (direction == "流出" and row_north_money < 0):
-                    consecutive += 1
-                else:
-                    break
-            if consecutive > 1:
-                report_lines.append(f"  • 连续{direction}: {consecutive} 天")
-
-        # 资金情绪判断
-        report_lines.append("")
-        report_lines.append("【资金情绪】")
-        if north_money > 5000000000:  # 50亿以上
-            sentiment = "外资大幅加仓 🔥"
-        elif north_money > 2000000000:  # 20亿以上
-            sentiment = "外资积极流入 📈"
-        elif north_money > 0:
-            sentiment = "外资小幅流入 📊"
-        elif north_money > -2000000000:
-            sentiment = "外资小幅流出 📉"
-        elif north_money > -5000000000:
-            sentiment = "外资持续流出 ⚠️"
-        else:
-            sentiment = "外资大幅撤离 🔴"
-        report_lines.append(f"  • {sentiment}")
-
+        report_lines.extend(["", "【当日通道状态】"])
+        for _, row in df.iterrows():
+            status = "交易中/已开通" if str(row.get("status", "")) == "1" else str(row.get("status", "未知"))
+            report_lines.append(
+                f"  • {row.get('channel', '北向通道')}: {status} | "
+                f"相关指数 {row.get('related_index', 'N/A')} "
+                f"{float(row.get('index_pct_chg', 0) or 0):+.2f}%"
+            )
+        report_lines.extend(
+            [
+                "",
+                "【分析约束】",
+                "  • 不生成近5日/10日净流入趋势，也不据此判断外资加仓或撤离",
+                "  • 可结合收盘后成交总额、活跃证券及季度持仓变化进行辅助观察",
+            ]
+        )
         return "\n".join(report_lines)
 
     except Exception as e:
@@ -723,18 +561,10 @@ async def get_margin_trading(trade_date: str, lookback_days: int = 10) -> str:
     Returns:
         两融余额分析报告
     """
-    provider = _get_tushare_provider()
+    provider = _get_market_data_provider()
 
     try:
-        # 清理日期字符串，去掉可能的时间部分
-        trade_date_clean = _clean_date_string(trade_date).replace('-', '')
-        end_date = datetime.strptime(trade_date_clean, '%Y%m%d')
-        start_date = end_date - timedelta(days=lookback_days + 10)
-
-        df = await provider.get_margin_detail(
-            start_date=start_date.strftime('%Y%m%d'),
-            end_date=trade_date_clean
-        )
+        df = await provider.get_margin_summary(_clean_date_string(trade_date), lookback_days)
 
         report_lines = [
             "",
@@ -745,43 +575,36 @@ async def get_margin_trading(trade_date: str, lookback_days: int = 10) -> str:
         ]
 
         if df is None or df.empty:
-            report_lines.append("⚠️ 暂无两融数据（可能需要更高的 Tushare 积分）")
+            report_lines.append("⚠️ 暂无两融数据（交易所免费接口暂时不可用）")
             return "\n".join(report_lines)
 
-        # 按日期排序，汇总沪深两市
         df = df.sort_values('trade_date', ascending=False)
-        latest_date = df.iloc[0]['trade_date']
-        latest_data = df[df['trade_date'] == latest_date]
+        latest = df.iloc[0]
+        latest_date = str(latest['trade_date'])
+        rzye = float(latest['financing_balance']) / 100000000
+        rqye = float(latest['securities_balance']) / 100000000
+        rzrqye = float(latest['margin_balance']) / 100000000
 
-        # 汇总数据
-        rzye = latest_data['rzye'].sum() / 100000000  # 融资余额（亿元）
-        rqye = latest_data['rqye'].sum() / 100000000  # 融券余额（亿元）
-        rzrqye = latest_data['rzrqye'].sum() / 100000000 if 'rzrqye' in latest_data.columns else rzye + rqye
-
-        report_lines.append("【今日两融余额】")
+        report_lines.append(f"【最新两融余额（{latest_date}）】")
         report_lines.append(f"  • 融资余额: {rzye:.2f} 亿元")
         report_lines.append(f"  • 融券余额: {rqye:.2f} 亿元")
         report_lines.append(f"  • 两融余额: {rzrqye:.2f} 亿元")
 
         # 计算变化
-        unique_dates = df['trade_date'].unique()
-        if len(unique_dates) >= 2:
-            prev_date = unique_dates[1]
-            prev_data = df[df['trade_date'] == prev_date]
-            prev_rzye = prev_data['rzye'].sum() / 100000000
+        if len(df) >= 2:
+            prev_rzye = float(df.iloc[1]['financing_balance']) / 100000000
             change = rzye - prev_rzye
             change_icon = "🔴" if change > 0 else "🟢"
             change_text = "增加" if change > 0 else "减少"
             report_lines.append(f"  • 融资变化: {change_icon} {abs(change):.2f} 亿元 ({change_text})")
 
         # 近期趋势
-        if len(unique_dates) >= 5:
+        if len(df) >= 5:
             report_lines.append("")
             report_lines.append("【近期趋势】")
-            first_date_data = df[df['trade_date'] == unique_dates[-1]]
-            first_rzye = first_date_data['rzye'].sum() / 100000000
+            first_rzye = float(df.iloc[-1]['financing_balance']) / 100000000
             total_change = rzye - first_rzye
-            report_lines.append(f"  • 近{len(unique_dates)}日融资变化: {total_change:.2f} 亿元")
+            report_lines.append(f"  • 近{len(df)}个数据日融资变化: {total_change:.2f} 亿元")
 
         # 杠杆情绪判断
         report_lines.append("")
@@ -813,12 +636,9 @@ async def get_limit_stats(trade_date: str) -> str:
     Returns:
         涨跌停和涨跌家数分析报告
     """
-    provider = _get_tushare_provider()
+    provider = _get_market_data_provider()
 
     try:
-        trade_date_clean = trade_date.replace('-', '')
-
-        # 获取最新可用交易日
         actual_date = await _get_latest_trade_date(trade_date)
         actual_date_formatted = f"{actual_date[:4]}-{actual_date[4:6]}-{actual_date[6:8]}"
 
@@ -830,32 +650,29 @@ async def get_limit_stats(trade_date: str) -> str:
             "",
         ]
 
-        # 获取涨跌家数统计
-        stats = await provider.get_daily_stats(actual_date)
+        activity, pools = await asyncio.gather(
+            provider.get_market_activity(),
+            provider.get_limit_pools(actual_date),
+        )
+        activity_date = str(activity.get("data_time", ""))[:10].replace("-", "")
+        activity_matches = activity and activity_date == actual_date
 
-        if stats:
+        if activity_matches:
+            total = activity["up_count"] + activity["down_count"] + activity["flat_count"]
+            up_ratio = activity["up_count"] / total * 100 if total else 0
+            down_ratio = activity["down_count"] / total * 100 if total else 0
             report_lines.append("【涨跌家数】")
-            report_lines.append(f"  • 上涨: {stats['up_count']} 家 ({stats['up_ratio']:.1f}%)")
-            report_lines.append(f"  • 下跌: {stats['down_count']} 家 ({stats['down_ratio']:.1f}%)")
-            report_lines.append(f"  • 平盘: {stats['flat_count']} 家")
-            report_lines.append(f"  • 涨跌比: {stats['up_count']}:{stats['down_count']}")
+            report_lines.append(f"  • 上涨: {activity['up_count']} 家 ({up_ratio:.1f}%)")
+            report_lines.append(f"  • 下跌: {activity['down_count']} 家 ({down_ratio:.1f}%)")
+            report_lines.append(f"  • 平盘: {activity['flat_count']} 家")
+            report_lines.append(f"  • 涨跌比: {activity['up_count']}:{activity['down_count']}")
 
             report_lines.append("")
             report_lines.append("【涨跌停统计】")
-            report_lines.append(f"  • 涨停: {stats['limit_up']} 家")
-            report_lines.append(f"  • 跌停: {stats['limit_down']} 家")
-
-            report_lines.append("")
-            report_lines.append("【涨跌幅分布】")
-            report_lines.append(f"  • 涨幅>5%: {stats['up_gt5']} 家")
-            report_lines.append(f"  • 涨幅3-5%: {stats['up_3_5']} 家")
-            report_lines.append(f"  • 跌幅>5%: {stats['down_gt5']} 家")
-            report_lines.append(f"  • 跌幅3-5%: {stats['down_3_5']} 家")
-
-            # 市场情绪判断
+            report_lines.append(f"  • 涨停: {activity['limit_up_count']} 家")
+            report_lines.append(f"  • 跌停: {activity['limit_down_count']} 家")
             report_lines.append("")
             report_lines.append("【市场情绪】")
-            up_ratio = stats['up_ratio']
             if up_ratio > 70:
                 sentiment = "极度乐观 🔥"
             elif up_ratio > 55:
@@ -866,41 +683,26 @@ async def get_limit_stats(trade_date: str) -> str:
                 sentiment = "偏向悲观 📉"
             else:
                 sentiment = "极度悲观 ❄️"
-            report_lines.append(f"  • {sentiment} (涨跌比 {stats['up_count']}:{stats['down_count']})")
-
-            # 赚钱效应
-            profit_stocks = stats['up_gt5'] + stats['up_3_5']
-            loss_stocks = stats['down_gt5'] + stats['down_3_5']
-            if profit_stocks > loss_stocks * 2:
-                effect = "赚钱效应强 💰"
-            elif profit_stocks > loss_stocks:
-                effect = "赚钱效应一般 📊"
-            elif loss_stocks > profit_stocks * 2:
-                effect = "亏钱效应强 ⚠️"
-            else:
-                effect = "亏钱效应一般 📉"
-            report_lines.append(f"  • {effect}")
+            report_lines.append(
+                f"  • {sentiment} (涨跌比 {activity['up_count']}:{activity['down_count']})"
+            )
         else:
-            report_lines.append("⚠️ 暂无涨跌家数数据")
+            report_lines.append("⚠️ 该日期暂无匹配的全市场涨跌家数数据")
 
-        # 尝试获取涨跌停详情
-        limit_df = await provider.get_limit_list(actual_date)
-        if limit_df is not None and not limit_df.empty:
-            limit_up_df = limit_df[limit_df['limit'] == 'U']
-            limit_down_df = limit_df[limit_df['limit'] == 'D']
-
-            if not limit_up_df.empty:
-                report_lines.append("")
-                report_lines.append("【涨停详情】")
-                report_lines.append(f"  • 涨停家数: {len(limit_up_df)} 家")
-                # 连板统计
-                if 'up_stat' in limit_up_df.columns:
-                    multi_board = limit_up_df[limit_up_df['up_stat'].str.contains('2|3|4|5|6|7|8|9', na=False)]
-                    if len(multi_board) > 0:
-                        report_lines.append(f"  • 连板: {len(multi_board)} 家")
-
-            if not limit_down_df.empty:
-                report_lines.append(f"  • 跌停家数: {len(limit_down_df)} 家")
+        limit_up_df = pools.get("limit_up", pd.DataFrame())
+        limit_down_df = pools.get("limit_down", pd.DataFrame())
+        if not limit_up_df.empty or not limit_down_df.empty:
+            report_lines.extend(
+                [
+                    "",
+                    "【涨跌停池详情】",
+                    f"  • 涨停池: {len(limit_up_df)} 家",
+                    f"  • 跌停池: {len(limit_down_df)} 家",
+                ]
+            )
+            if "连板数" in limit_up_df.columns:
+                multi_board = int((pd.to_numeric(limit_up_df["连板数"], errors="coerce") >= 2).sum())
+                report_lines.append(f"  • 连板股: {multi_board} 家")
 
         return "\n".join(report_lines)
 
@@ -920,7 +722,7 @@ async def get_index_technical(trade_date: str, lookback_days: int = 60) -> str:
     Returns:
         指数技术指标分析报告
     """
-    provider = _get_tushare_provider()
+    provider = _get_market_data_provider()
 
     try:
         # 清理日期字符串，去掉可能的时间部分
@@ -951,6 +753,11 @@ async def get_index_technical(trade_date: str, lookback_days: int = 60) -> str:
             return "\n".join(report_lines)
 
         df = df.sort_values('trade_date').reset_index(drop=True)
+        latest_data_date = str(df.iloc[-1].get('trade_date', trade_date_clean))
+        report_lines.append(
+            f"📌 指标数据截止: {latest_data_date[:4]}-{latest_data_date[4:6]}-{latest_data_date[6:8]}"
+        )
+        report_lines.append("")
 
         # 计算技术指标
         close = df['close']
@@ -1099,4 +906,3 @@ def get_limit_stats_sync(trade_date: str) -> str:
 def get_index_technical_sync(trade_date: str, lookback_days: int = 60) -> str:
     """get_index_technical 的同步版本"""
     return asyncio.run(get_index_technical(trade_date, lookback_days))
-

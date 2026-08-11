@@ -381,6 +381,8 @@ class ResearchManagerV2(ManagerAgent):
             prompt_type="user"  # 🆕 指定获取用户提示词
         )
         if prompt:
+            from core.agents.holding_context import append_holding_context
+            prompt = append_holding_context(prompt, state)
             logger.info(f"✅ 从模板系统获取研究经理用户提示词 (长度: {len(prompt)})")
             return prompt
         
@@ -460,7 +462,8 @@ class ResearchManagerV2(ManagerAgent):
         else:
             logger.warning("⚠️ 用户提示词不包含【分析步骤】指导")
 
-        return prompt
+        from core.agents.holding_context import append_holding_context
+        return append_holding_context(prompt, state)
     
     def _get_required_inputs(self) -> List[str]:
         """
@@ -495,4 +498,3 @@ class ResearchManagerV2(ManagerAgent):
             logger.warning(f"获取公司名称失败: {e}")
         
         return f"股票{ticker}"
-

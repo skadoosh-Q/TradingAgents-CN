@@ -201,7 +201,12 @@ def create_news_analyst(llm, toolkit):
                 logger.info(f"[新闻分析师] 🔧 预处理：强制调用统一新闻工具...")
                 logger.info(f"[新闻分析师] 📊 调用参数: stock_code={ticker}, max_news=10, model_info={model_info}")
 
-                pre_fetched_news = unified_news_tool(stock_code=ticker, max_news=10, model_info=model_info)
+                pre_fetched_news = unified_news_tool(
+                    stock_code=ticker,
+                    max_news=10,
+                    model_info=model_info,
+                    analysis_date=current_date,
+                )
 
                 logger.info(f"[新闻分析师] 📋 预处理返回结果长度: {len(pre_fetched_news) if pre_fetched_news else 0} 字符")
                 logger.info(f"[新闻分析师] 📄 预处理返回结果预览 (前500字符): {pre_fetched_news[:500] if pre_fetched_news else 'None'}")
@@ -337,7 +342,12 @@ def create_news_analyst(llm, toolkit):
                     logger.info(f"[新闻分析师] 🔧 强制调用统一新闻工具获取新闻数据...")
                     logger.info(f"[新闻分析师] 📊 调用参数: stock_code={ticker}, max_news=10")
 
-                    forced_news = unified_news_tool(stock_code=ticker, max_news=10, model_info=model_info)
+                    forced_news = unified_news_tool(
+                        stock_code=ticker,
+                        max_news=10,
+                        model_info=model_info,
+                        analysis_date=current_date,
+                    )
 
                     logger.info(f"[新闻分析师] 📋 强制获取返回结果长度: {len(forced_news) if forced_news else 0} 字符")
                     logger.info(f"[新闻分析师] 📄 强制获取返回结果预览 (前500字符): {forced_news[:500] if forced_news else 'None'}")

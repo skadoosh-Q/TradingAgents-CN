@@ -20,6 +20,7 @@ export interface LicenseInfo {
   trial_end_at?: string  // 试用到期时间
   pro_expire_at?: string  // PRO到期时间
   offline_mode?: boolean  // 是否离线模式
+  local_bypass?: boolean  // 自托管版本直接授权
 }
 
 // PRO 功能列表
@@ -142,6 +143,21 @@ export const useLicenseStore = defineStore('license', () => {
       console.log('📋 License Store: 收到响应', response)
 
       if (response.success && response.data) {
+        if (response.data.local_bypass) {
+          licenseInfo.value = {
+            email: response.data.email || '',
+            plan: 'enterprise',
+            features: response.data.features || [...PRO_FEATURES],
+            device_registered: true,
+            is_valid: true,
+            local_bypass: true,
+          }
+          appToken.value = null
+          localStorage.removeItem('app-token')
+          lastVerifiedAt.value = new Date()
+          return true
+        }
+
         // 如果用户没有配置 token
         if (!response.data.has_token) {
           licenseInfo.value = {
@@ -190,10 +206,8 @@ export const useLicenseStore = defineStore('license', () => {
     }
   }
 
-  // 初始化时验证
-  if (appToken.value) {
-    verifyLicense()
-  }
+  // 初始化时从后端加载授权状态；自托管部署会直接返回本地授权。
+  verifyLicense()
 
   return {
     // State
@@ -218,4 +232,3 @@ export const useLicenseStore = defineStore('license', () => {
     verifyLicense
   }
 })
-

@@ -8,7 +8,9 @@
 2. 外部 API（AKShare、Google News、Finnhub）
 """
 
+import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Annotated, List, Dict, Any
 from langchain_core.tools import tool
 from datetime import datetime, timedelta
@@ -33,38 +35,50 @@ def _query_news_from_database(symbol: str, start_date: datetime, end_date: datet
     """
     try:
         from app.core.database import get_mongo_db_sync
-        from app.core.data_source_priority import get_enabled_data_sources_sync
-
         db = get_mongo_db_sync()
         collection = db.stock_news
 
-        # 获取数据源优先级
-        enabled_sources = get_enabled_data_sources_sync(market_category="a_shares")
-        logger.info(f"📊 [新闻数据库查询] 数据源优先级: {enabled_sources}")
+        # end_date 是排他上界，确保分析日当天的新闻也能被查到。
+        query = {
+            "$and": [
+                {
+                    "$or": [
+                        {"symbol": symbol},
+                        {"symbols": symbol},
+                    ]
+                },
+                {
+                    "publish_time": {
+                        "$gte": start_date,
+                        "$lt": end_date,
+                    }
+                },
+            ]
+        }
+        cursor = collection.find(query).sort("publish_time", -1).limit(limit * 4)
 
-        # 按优先级尝试每个数据源
-        for data_source in enabled_sources:
-            query = {
-                "symbol": symbol,
-                "data_source": data_source,
-                "publish_time": {
-                    "$gte": start_date,
-                    "$lte": end_date
-                }
-            }
+        # 合并所有数据源，只对完全相同的 URL/标题/时间去重。
+        merged = []
+        seen = set()
+        for news in cursor:
+            publish_time = news.get("publish_time")
+            key = (
+                str(news.get("url") or "").strip(),
+                str(news.get("title") or "").strip(),
+                publish_time.isoformat() if isinstance(publish_time, datetime) else str(publish_time),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(news)
+            if len(merged) >= limit:
+                break
 
-            cursor = collection.find(query).sort("publish_time", -1).limit(limit)
-            news_list = list(cursor)
-
-            if news_list:
-                logger.info(f"✅ [新闻数据库查询] 从 {data_source} 数据源获取到 {len(news_list)} 条新闻")
-                return news_list
-            else:
-                logger.debug(f"⚠️ [新闻数据库查询] {data_source} 数据源没有数据，尝试下一个数据源")
-
-        # 所有数据源都没有数据
-        logger.info(f"⚠️ [新闻数据库查询] 所有数据源都没有 {symbol} 的新闻数据")
-        return []
+        logger.info(
+            f"📊 [新闻数据库查询] {start_date:%Y-%m-%d} 至 "
+            f"{(end_date - timedelta(days=1)):%Y-%m-%d} 合并获取 {len(merged)} 条"
+        )
+        return merged
 
     except Exception as e:
         logger.error(f"❌ [新闻数据库查询] 查询失败: {e}")
@@ -91,6 +105,7 @@ def _format_database_news(news_list: List[Dict[str, Any]], data_source_name: str
         publish_time = news.get('publish_time', '')
         url = news.get('url', '')
         source = news.get('source', '')
+        content = news.get('content', '') or news.get('summary', '')
 
         # 格式化时间
         if isinstance(publish_time, datetime):
@@ -106,11 +121,58 @@ def _format_database_news(news_list: List[Dict[str, Any]], data_source_name: str
 
         if source:
             news_item += f" - 来源: {source}"
+        if content:
+            news_item += f"\n  {str(content).strip()[:800]}"
 
         news_items.append(news_item)
 
     news_text = "\n".join(news_items)
     return f"## {data_source_name}\n{news_text}"
+
+
+def _primary_window_start(analysis_date: datetime) -> datetime:
+    """返回分析日所在周的上一个周一。"""
+    current_week_monday = analysis_date - timedelta(days=analysis_date.weekday())
+    return current_week_monday - timedelta(days=7)
+
+
+def _run_coroutine_sync(coro):
+    """在同步 LangGraph 工具节点中安全执行异步数据源。"""
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        return executor.submit(asyncio.run, coro).result(timeout=45)
+
+
+def _refresh_a_share_news(symbol: str, limit: int = 20) -> List[Dict[str, Any]]:
+    """刷新 AKShare/东方财富新闻并合并写入数据库。"""
+    try:
+        from tradingagents.dataflows.providers.china.akshare import AKShareProvider
+        from app.services.news_data_service import NewsDataService
+
+        provider = AKShareProvider()
+        news_list = _run_coroutine_sync(
+            provider.get_stock_news(symbol=symbol, limit=limit)
+        ) or []
+        valid_news = [item for item in news_list if item.get("publish_time")]
+        if valid_news:
+            NewsDataService().save_news_data_sync(
+                valid_news, data_source="akshare", market="CN"
+            )
+        logger.info(f"✅ [统一新闻工具] 实时刷新完成: {len(valid_news)} 条")
+        return valid_news
+    except Exception as exc:
+        logger.warning(f"⚠️ [统一新闻工具] 实时刷新失败，继续使用缓存: {exc}")
+        return []
+
+
+def _filter_news_by_window(
+    news_list: List[Dict[str, Any]], start_date: datetime, end_date: datetime
+) -> List[Dict[str, Any]]:
+    result = []
+    for news in news_list:
+        publish_time = news.get("publish_time")
+        if isinstance(publish_time, datetime) and start_date <= publish_time < end_date:
+            result.append(news)
+    return sorted(result, key=lambda item: item["publish_time"], reverse=True)
 
 
 @tool
@@ -153,93 +215,66 @@ def get_stock_news_unified(
         # 计算新闻查询的日期范围
         # 处理可能包含时间的日期字符串（如 "2026-01-14 00:00:00"）
         curr_date_clean = curr_date.split()[0] if ' ' in curr_date else curr_date
-        end_date = datetime.strptime(curr_date_clean, '%Y-%m-%d')
-        start_date = end_date - timedelta(days=7)
+        analysis_date = datetime.strptime(curr_date_clean, '%Y-%m-%d')
+        end_date = analysis_date + timedelta(days=1)
+        start_date = analysis_date - timedelta(days=7)
         start_date_str = start_date.strftime('%Y-%m-%d')
 
         result_data = []
 
         if is_china:
-            # 中国A股：优先从数据库查询，降级到AKShare东方财富新闻
+            # 中国A股：当前日分析先刷新，再读取合并后的数据库新闻。
             logger.info(f"🇨🇳 [统一新闻工具] 处理A股新闻...")
 
             clean_ticker = ticker.replace('.SH', '').replace('.SZ', '').replace('.SS', '')\
                            .replace('.XSHE', '').replace('.XSHG', '')
 
-            # 1. 优先从数据库查询（按数据源优先级：local > akshare > tushare）
-            try:
-                logger.info(f"📊 [统一新闻工具] 优先从数据库查询新闻...")
-                db_news = _query_news_from_database(
-                    symbol=clean_ticker,
-                    start_date=start_date,
-                    end_date=end_date,
-                    limit=20
+            refreshed_news = []
+            is_current_analysis = abs((datetime.now().date() - analysis_date.date()).days) <= 1
+            if is_current_analysis:
+                refreshed_news = _refresh_a_share_news(clean_ticker, limit=20)
+            else:
+                logger.info(f"📅 历史分析 {curr_date_clean} 跳过实时新闻刷新")
+
+            primary_start = _primary_window_start(analysis_date)
+            primary_news = _query_news_from_database(
+                symbol=clean_ticker,
+                start_date=primary_start,
+                end_date=end_date,
+                limit=20,
+            )
+            if not primary_news and refreshed_news:
+                primary_news = _filter_news_by_window(
+                    refreshed_news, primary_start, end_date
+                )[:20]
+
+            if primary_news:
+                result_data.append(
+                    _format_database_news(primary_news, "核心新闻窗口（刷新后合并）")
                 )
-
-                if db_news:
-                    # 获取数据源名称
-                    data_source = db_news[0].get('data_source', 'unknown')
-                    source_name_map = {
-                        'local': '本地数据',
-                        'akshare': '东方财富（数据库缓存）',
-                        'tushare': 'Tushare（数据库缓存）'
-                    }
-                    source_name = source_name_map.get(data_source, f'{data_source}（数据库缓存）')
-
-                    formatted_news = _format_database_news(db_news, source_name)
-                    result_data.append(formatted_news)
-                    logger.info(f"✅ 从数据库获取到 {len(db_news)} 条新闻（数据源: {data_source}）")
+                start_date = primary_start
+                start_date_str = primary_start.strftime('%Y-%m-%d')
+            else:
+                context_start = analysis_date - timedelta(days=30)
+                context_news = _query_news_from_database(
+                    symbol=clean_ticker,
+                    start_date=context_start,
+                    end_date=end_date,
+                    limit=20,
+                )
+                if context_news:
+                    result_data.append(
+                        _format_database_news(
+                            context_news,
+                            "30天内历史背景（不得作为当前催化剂）",
+                        )
+                    )
+                    start_date = context_start
+                    start_date_str = context_start.strftime('%Y-%m-%d')
                 else:
-                    logger.info(f"⚠️ 数据库中没有新闻，降级到外部API...")
-
-                    # 2. 降级到AKShare东方财富新闻（实时获取）
-                    try:
-                        from tradingagents.dataflows.providers.china.akshare import AKShareProvider
-                        provider = AKShareProvider()
-                        news_df = provider.get_stock_news_sync(symbol=clean_ticker)
-
-                        if news_df is not None and not news_df.empty:
-                            em_news_items = []
-                            for _, row in news_df.iterrows():
-                                news_title = row.get('新闻标题', '') or row.get('标题', '')
-                                news_time = row.get('发布时间', '') or row.get('时间', '')
-                                news_url = row.get('新闻链接', '') or row.get('链接', '')
-                                news_item = f"- **{news_title}** [{news_time}]({news_url})"
-                                em_news_items.append(news_item)
-
-                            if em_news_items:
-                                em_news_text = "\n".join(em_news_items)
-                                result_data.append(f"## 东方财富新闻（实时获取）\n{em_news_text}")
-                                logger.info(f"✅ 实时获取{len(em_news_items)}条东方财富新闻")
-                    except Exception as em_e:
-                        logger.error(f"❌ 东方财富新闻获取失败: {em_e}")
-                        result_data.append(f"## 东方财富新闻\n获取失败: {em_e}")
-
-            except Exception as db_e:
-                logger.error(f"❌ 数据库查询失败: {db_e}，降级到外部API")
-
-                # 降级到AKShare东方财富新闻
-                try:
-                    from tradingagents.dataflows.providers.china.akshare import AKShareProvider
-                    provider = AKShareProvider()
-                    news_df = provider.get_stock_news_sync(symbol=clean_ticker)
-
-                    if news_df is not None and not news_df.empty:
-                        em_news_items = []
-                        for _, row in news_df.iterrows():
-                            news_title = row.get('新闻标题', '') or row.get('标题', '')
-                            news_time = row.get('发布时间', '') or row.get('时间', '')
-                            news_url = row.get('新闻链接', '') or row.get('链接', '')
-                            news_item = f"- **{news_title}** [{news_time}]({news_url})"
-                            em_news_items.append(news_item)
-
-                        if em_news_items:
-                            em_news_text = "\n".join(em_news_items)
-                            result_data.append(f"## 东方财富新闻（实时获取）\n{em_news_text}")
-                            logger.info(f"✅ 实时获取{len(em_news_items)}条东方财富新闻")
-                except Exception as em_e:
-                    logger.error(f"❌ 东方财富新闻获取失败: {em_e}")
-                    result_data.append(f"## 东方财富新闻\n获取失败: {em_e}")
+                    result_data.append("## 新闻时效性\n未获取到核心窗口有效新闻。")
+                    start_date = primary_start
+                    start_date_str = primary_start.strftime('%Y-%m-%d')
 
         elif is_hk:
             # 港股：使用Google新闻
@@ -326,7 +361,7 @@ def get_stock_news_unified(
 {chr(10).join(result_data)}
 
 ---
-*数据来源: 优先使用数据库缓存（按数据源优先级：local > akshare > tushare），降级到外部API*
+*数据来源: 当前分析先刷新，再合并数据库中的多数据源新闻*
 """
 
         logger.info(f"📰 [统一新闻工具] 数据获取完成，总长度: {len(combined_result)}")
@@ -336,4 +371,3 @@ def get_stock_news_unified(
         error_msg = f"统一新闻工具执行失败: {str(e)}"
         logger.error(f"❌ [统一新闻工具] {error_msg}")
         return error_msg
-

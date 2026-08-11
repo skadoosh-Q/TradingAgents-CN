@@ -12,7 +12,8 @@ import logging
 from app.core.database import get_mongo_db
 from app.core.response import ok, fail
 from app.routers.auth_db import get_current_user
-from app.services.license_service import get_license_service, LicenseInfo
+from app.services.license_service import get_license_service, get_local_license_info, LicenseInfo
+from app.core.config import settings
 from bson import ObjectId
 
 logger = logging.getLogger("app.routers.license")
@@ -41,6 +42,10 @@ async def verify_license(
     
     此接口不需要 PRO 权限，用于验证 token 是否有效
     """
+    if settings.LOCAL_LICENSE_BYPASS:
+        license_info = get_local_license_info(user.get("email", ""))
+        return ok(license_info.model_dump(mode="json"))
+
     license_service = get_license_service()
     
     license_info = await license_service.verify_app_token(
@@ -72,6 +77,15 @@ async def save_app_token(
     
     注意：设备ID由后端基于硬件信息自动生成，用户无法获取或复制
     """
+    if settings.LOCAL_LICENSE_BYPASS:
+        return ok({
+            "message": "本地部署已直接授权，无需保存 App Token",
+            "plan": "enterprise",
+            "email": user.get("email", ""),
+            "features": get_local_license_info().features,
+            "local_bypass": True,
+        })
+
     license_service = get_license_service()
     
     # 验证 token（设备ID由后端自动生成）
@@ -154,6 +168,14 @@ async def get_license_status(
     注意：设备ID由后端基于硬件信息自动生成，用户无法获取或复制
     """
     logger.info(f"✅ /api/license/status 路由已匹配，开始处理请求")
+    if settings.LOCAL_LICENSE_BYPASS:
+        license_info = get_local_license_info(user.get("email", ""))
+        return ok({
+            "has_token": False,
+            **license_info.model_dump(mode="json"),
+            "message": "本地部署已直接授权",
+        })
+
     try:
         db = get_mongo_db()
         user_id = str(user.get("id", "unknown"))
@@ -205,4 +227,3 @@ async def get_license_status(
     except Exception as e:
         logger.error(f"❌ 获取授权状态失败: {type(e).__name__}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"获取授权状态失败: {str(e)}")
-

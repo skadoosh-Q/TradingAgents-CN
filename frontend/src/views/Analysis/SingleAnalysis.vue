@@ -35,7 +35,7 @@
     <div class="analysis-container">
       <el-row :gutter="24">
         <!-- 左侧：基础配置 -->
-        <el-col :span="18">
+        <el-col :xs="24" :sm="24" :md="16" :lg="18">
           <el-card class="main-form-card" shadow="hover">
             <template #header>
               <div class="card-header">
@@ -49,7 +49,7 @@
               <div class="form-section">
                 <h4 class="section-title">📊 股票信息</h4>
                 <el-row :gutter="16">
-                  <el-col :span="12">
+                  <el-col :xs="24" :sm="12">
                     <el-form-item label="股票代码" required>
                       <el-input
                         v-model="analysisForm.stockCode"
@@ -75,7 +75,7 @@
                       </div>
                     </el-form-item>
                   </el-col>
-                  <el-col :span="12">
+                  <el-col :xs="24" :sm="12">
                     <el-form-item label="市场类型">
                       <el-select
                         v-model="analysisForm.market"
@@ -124,6 +124,49 @@
                     </el-button>
                   </div>
                 </el-form-item>
+
+                <div class="holding-section" :class="{ active: analysisForm.isHolding }">
+                  <el-form-item label="持仓状态">
+                    <div class="holding-toggle">
+                      <el-switch
+                        v-model="analysisForm.isHolding"
+                        aria-label="是否已持有该股票"
+                      />
+                      <span class="holding-status">
+                        {{ analysisForm.isHolding ? '已持有' : '未持有' }}
+                      </span>
+                    </div>
+                  </el-form-item>
+
+                  <el-row v-if="analysisForm.isHolding" :gutter="16" class="holding-inputs">
+                    <el-col :xs="24" :sm="12">
+                      <el-form-item label="持有股数" required>
+                        <el-input-number
+                          v-model="analysisForm.holdingShares"
+                          :min="1"
+                          :step="100"
+                          :precision="0"
+                          controls-position="right"
+                          placeholder="请输入持有股数"
+                          style="width: 100%"
+                        />
+                      </el-form-item>
+                    </el-col>
+                    <el-col :xs="24" :sm="12">
+                      <el-form-item label="成本价" required>
+                        <el-input-number
+                          v-model="analysisForm.holdingCostPrice"
+                          :min="0.001"
+                          :step="0.1"
+                          :precision="3"
+                          controls-position="right"
+                          placeholder="请输入每股成本价"
+                          style="width: 100%"
+                        />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+                </div>
               </div>
 
               <!-- 分析深度 -->
@@ -380,7 +423,7 @@
         </el-col>
 
         <!-- 右侧：高级配置 -->
-        <el-col :span="6">
+        <el-col :xs="24" :sm="24" :md="8" :lg="6">
           <el-card class="config-card" shadow="hover">
             <template #header>
               <div class="card-header">
@@ -513,6 +556,36 @@
           </el-card>
         </el-col>
       </el-row>
+
+      <div
+        v-if="analysisStatus === 'running' && partialAnalysisReports.length > 0"
+        class="partial-results-section"
+      >
+        <el-card class="partial-results-card" shadow="never">
+          <template #header>
+            <div class="partial-results-header">
+              <div>
+                <h3>阶段分析结果</h3>
+                <span>已完成 {{ partialAnalysisReports.length }} 项，后续结果会自动补充</span>
+              </div>
+              <el-tag type="success" effect="plain">实时更新</el-tag>
+            </div>
+          </template>
+
+          <el-tabs v-model="activePartialReportTab" class="partial-report-tabs">
+            <el-tab-pane
+              v-for="(report, index) in partialAnalysisReports"
+              :key="report.title"
+              :name="index.toString()"
+              :label="report.title"
+            >
+              <div class="partial-report-content">
+                <div class="report-content" v-html="formatReportContent(report.content)"></div>
+              </div>
+            </el-tab-pane>
+          </el-tabs>
+        </el-card>
+      </div>
 
       <!-- 分析结果显示 -->
       <div v-if="showResults && analysisResults" class="results-section">
@@ -840,6 +913,10 @@ import { marked } from 'marked'
 import { recommendModels, validateModels, type ModelRecommendationResponse } from '@/api/modelCapabilities'
 import { validateStockCode, getStockCodeFormatHelp, getStockCodeExamples } from '@/utils/stockValidator'
 import { normalizeMarketForAnalysis, getMarketByStockCode } from '@/utils/market'
+import {
+  restoreAnalysisModelSelection,
+  saveAnalysisModelSelection
+} from '@/utils/analysisModelSelection'
 
 // 配置marked选项
 marked.setOptions({
@@ -865,6 +942,9 @@ interface AnalysisForm {
   includeRisk: boolean
   language: 'zh-CN' | 'en-US'
   engine: AnalysisEngineType  // 分析引擎: 固定使用 v2.0 引擎
+  isHolding: boolean
+  holdingShares: number | null
+  holdingCostPrice: number | null
 }
 
 // 使用store
@@ -883,7 +963,9 @@ const currentTaskId = ref('')
 const analysisStatus = ref('idle') // 'idle', 'running', 'completed', 'failed'
 const showResults = ref(false)
 const analysisResults = ref<any>(null)
+const partialReports = ref<Record<string, string>>({})
 const activeReportTab = ref('') // 当前激活的报告标签页
+const activePartialReportTab = ref('0')
 const progressInfo = ref({
   progress: 0,
   currentStep: '',
@@ -917,6 +999,7 @@ const modelSettings = ref({
   quickAnalysisModel: 'qwen-turbo',
   deepAnalysisModel: 'qwen-max'
 })
+const modelSettingsInitialized = ref(false)
 
 // 可用的模型列表（从配置中获取）
 const availableModels = ref<any[]>([])
@@ -961,7 +1044,10 @@ const analysisForm = reactive<AnalysisForm>({
   includeSentiment: true,
   includeRisk: true,
   language: 'zh-CN',
-  engine: 'v2'  // 固定使用 v2.0 引擎
+  engine: 'v2',  // 固定使用 v2.0 引擎
+  isHolding: false,
+  holdingShares: null,
+  holdingCostPrice: null
 })
 
 // 股票代码验证相关
@@ -1228,6 +1314,11 @@ const submitAnalysis = async () => {
     return
   }
 
+  if (analysisForm.isHolding && (!analysisForm.holdingShares || !analysisForm.holdingCostPrice)) {
+    ElMessage.warning('已持有股票时，请填写持有股数和成本价')
+    return
+  }
+
   submitting.value = true
 
   try {
@@ -1249,9 +1340,15 @@ const submitAnalysis = async () => {
         language: analysisForm.language,
         quick_analysis_model: modelSettings.value.quickAnalysisModel,
         deep_analysis_model: modelSettings.value.deepAnalysisModel,
+        is_holding: analysisForm.isHolding,
+        holding_shares: analysisForm.isHolding ? analysisForm.holdingShares : undefined,
+        holding_cost_price: analysisForm.isHolding ? analysisForm.holdingCostPrice : undefined,
         engine: 'v2'  // 🔥 固定使用 v2.0 引擎（旧版引擎已隐藏）
       }
     }
+
+    // 提交时再次保存，确保本次实际使用的模型成为下次默认选择。
+    saveModelSelection()
 
     const response = await analysisApi.startSingleAnalysis(request)
 
@@ -1275,11 +1372,14 @@ const submitAnalysis = async () => {
     // 保存任务状态到缓存
     saveTaskToCache(currentTaskId.value, {
       parameters: { ...analysisForm },
+      modelSettings: { ...modelSettings.value },
       submitTime: new Date().toISOString()
     })
 
     analysisStatus.value = 'running'
     showResults.value = false
+    partialReports.value = {}
+    activePartialReportTab.value = '0'
     progressInfo.value = {
       progress: 0,
       currentStep: '正在初始化分析...',
@@ -1474,6 +1574,13 @@ const updateProgressInfo = (status: any) => {
     progressInfo.value.message = status.message
   }
 
+  if (status.partial_reports && typeof status.partial_reports === 'object') {
+    partialReports.value = {
+      ...partialReports.value,
+      ...status.partial_reports
+    }
+  }
+
   // 接收后端返回的时间数据
   if (status.elapsed_time !== undefined) {
     progressInfo.value.elapsedTime = status.elapsed_time
@@ -1509,6 +1616,8 @@ const updateProgressInfo = (status: any) => {
 const restartAnalysis = () => {
   // 清除任务缓存
   clearTaskCache()
+  partialReports.value = {}
+  activePartialReportTab.value = '0'
 
   analysisStatus.value = 'idle'
   showResults.value = false
@@ -1556,6 +1665,10 @@ const startNewAnalysis = () => {
 
   // 清空股票代码，让用户输入新的股票代码
   analysisForm.stockCode = ''
+  analysisForm.symbol = ''
+  analysisForm.isHolding = false
+  analysisForm.holdingShares = null
+  analysisForm.holdingCostPrice = null
   
   // 滚动到顶部，方便用户输入新的股票代码
   window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -1746,6 +1859,10 @@ const getAnalysisReports = (data: any) => {
 
   return reports
 }
+
+const partialAnalysisReports = computed(() => {
+  return getAnalysisReports({ reports: partialReports.value })
+})
 
 // 获取报告图标
 const getReportIcon = (title: string) => {
@@ -2343,6 +2460,37 @@ const updateAnalysisSteps = (status: any) => {
   console.log('📋 步骤状态更新完成:', statusSummary)
 }
 
+const restoreModelSelection = () => {
+  modelSettings.value = restoreAnalysisModelSelection(
+    authStore.user?.id,
+    availableModels.value,
+    modelSettings.value
+  )
+}
+
+const saveModelSelection = () => {
+  if (!modelSettingsInitialized.value) return
+  saveAnalysisModelSelection(authStore.user?.id, availableModels.value, modelSettings.value)
+}
+
+const restoreModelSelectionFromTask = (parameters: any) => {
+  const quickModel = parameters?.quick_analysis_model
+  const deepModel = parameters?.deep_analysis_model
+  if (!quickModel || !deepModel) return
+
+  const quickAvailable = availableModels.value.some(model =>
+    model.enabled !== false && model.model_name === quickModel
+  )
+  const deepAvailable = availableModels.value.some(model =>
+    model.enabled !== false && model.model_name === deepModel
+  )
+  if (!quickAvailable || !deepAvailable) return
+
+  modelSettings.value.quickAnalysisModel = quickModel
+  modelSettings.value.deepAnalysisModel = deepModel
+  saveModelSelection()
+}
+
 // 初始化模型设置
 const initializeModelSettings = async () => {
   try {
@@ -2354,6 +2502,9 @@ const initializeModelSettings = async () => {
     // 获取所有可用的模型列表
     const llmConfigs = await configApi.getLLMConfigs()
     availableModels.value = llmConfigs.filter((config: any) => config.enabled)
+
+    // 用户上次选择优先于系统默认值；已删除或停用的模型不会恢复。
+    restoreModelSelection()
 
     console.log('✅ 加载模型配置成功:', {
       quick: modelSettings.value.quickAnalysisModel,
@@ -2369,6 +2520,8 @@ const initializeModelSettings = async () => {
     console.error('加载默认模型配置失败:', error)
     modelSettings.value.quickAnalysisModel = 'qwen-turbo'
     modelSettings.value.deepAnalysisModel = 'qwen-max'
+  } finally {
+    modelSettingsInitialized.value = true
   }
 }
 
@@ -2431,6 +2584,15 @@ const restoreTaskFromCache = async () => {
     const status = response.data // 响应拦截器已返回 response.data
 
     console.log('📊 恢复的任务状态:', status)
+
+    // 后端状态包含真实提交参数，可迁移缓存功能上线前的最近一次选择。
+    restoreModelSelectionFromTask(status.parameters)
+    if (cached.taskData.modelSettings) {
+      restoreModelSelectionFromTask({
+        quick_analysis_model: cached.taskData.modelSettings.quickAnalysisModel,
+        deep_analysis_model: cached.taskData.modelSettings.deepAnalysisModel
+      })
+    }
 
     if (status.status === 'completed') {
       // 任务已完成，显示结果
@@ -2643,12 +2805,13 @@ watch(() => analysisForm.researchDepth, () => {
 
 // 监听模型选择变化
 watch([() => modelSettings.value.quickAnalysisModel, () => modelSettings.value.deepAnalysisModel], () => {
+  saveModelSelection()
   checkModelSuitability()
 })
 
 // 页面初始化
 onMounted(async () => {
-  initializeModelSettings()
+  await initializeModelSettings()
 
   // 🆕 从用户偏好加载默认设置
   const authStore = useAuthStore()
@@ -2859,6 +3022,32 @@ onMounted(async () => {
 
         .el-icon {
           font-size: 14px;
+        }
+      }
+
+      .holding-section {
+        margin-top: 4px;
+        padding-top: 16px;
+        border-top: 1px solid #e2e8f0;
+
+        &.active {
+          border-top-color: #67c23a;
+        }
+
+        .holding-toggle {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          min-height: 32px;
+        }
+
+        .holding-status {
+          color: #475569;
+          font-weight: 500;
+        }
+
+        .holding-inputs {
+          width: 100%;
         }
       }
 
@@ -3823,6 +4012,37 @@ onMounted(async () => {
     line-height: 1.5;
     margin-left: 36px; /* 对齐图标后的文字 */
   }
+}
+
+.partial-results-section {
+  margin: 24px 0 32px;
+}
+
+.partial-results-card {
+  border-color: var(--el-color-success-light-5);
+}
+
+.partial-results-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.partial-results-header h3 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.partial-results-header span {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
+.partial-report-content {
+  max-height: 560px;
+  overflow-y: auto;
+  padding: 8px 12px 16px;
 }
 
 /* 报告内容包装器 */

@@ -593,11 +593,12 @@ class ConfigService:
             # 查找并删除指定的LLM配置
             original_count = len(config.llm_configs)
 
-            # 使用更宽松的匹配条件
+            normalized_provider = provider.strip().lower()
             config.llm_configs = [
                 llm for llm in config.llm_configs
                 if not (
-                    (llm.provider if isinstance(llm.provider, str) else llm.provider.value).lower() == provider.lower()
+                    str(getattr(llm.provider, "value", llm.provider)).strip().lower()
+                    == normalized_provider
                     and llm.model_name == model_name
                 )
             ]
@@ -608,6 +609,19 @@ class ConfigService:
             if new_count == original_count:
                 print(f"❌ 没有找到匹配的配置: {provider}/{model_name}")
                 return False  # 没有找到要删除的配置
+
+            # 模型选择只保存 model_name。最后一个同名配置删除后，同步清理
+            # 默认、快速和深度模型引用，避免留下无法使用的孤儿值。
+            model_still_exists = any(
+                llm.model_name == model_name for llm in config.llm_configs
+            )
+            if not model_still_exists:
+                if config.default_llm == model_name:
+                    config.default_llm = None
+
+                for setting_key in ("quick_analysis_model", "deep_analysis_model"):
+                    if config.system_settings.get(setting_key) == model_name:
+                        config.system_settings[setting_key] = ""
 
             # 保存更新后的配置
             save_result = await self.save_system_config(config)
@@ -880,9 +894,18 @@ class ConfigService:
             if not config:
                 return False
 
-            # 查找并更新对应的LLM配置
+            # 厂家和模型名共同组成配置身份，避免覆盖其他厂家的同名模型。
+            normalized_provider = str(
+                getattr(llm_config.provider, "value", llm_config.provider)
+            ).strip().lower()
             for i, existing_config in enumerate(config.llm_configs):
-                if existing_config.model_name == llm_config.model_name:
+                existing_provider = str(
+                    getattr(existing_config.provider, "value", existing_config.provider)
+                ).strip().lower()
+                if (
+                    existing_provider == normalized_provider
+                    and existing_config.model_name == llm_config.model_name
+                ):
                     config.llm_configs[i] = llm_config
                     break
             else:
@@ -4101,19 +4124,27 @@ class ConfigService:
             data = {
                 "model": model_name,
                 "messages": [
-                    {"role": "user", "content": "你好，请简单介绍一下你自己。"}
+                    {"role": "user", "content": "你好，请回复 OK。"}
                 ],
-                "max_tokens": 50,
+                "max_tokens": 200,
                 "temperature": 0.1
             }
+
+            # V4 默认会消耗输出预算生成推理内容。连接测试只验证连通性，
+            # 因此关闭思考，避免最终 content 为空而被误判为失败。
+            if model_name.lower().startswith("deepseek-v4-"):
+                data["thinking"] = {"type": "disabled"}
 
             response = requests.post(url, json=data, headers=headers, timeout=10)
 
             if response.status_code == 200:
                 result = response.json()
                 if "choices" in result and len(result["choices"]) > 0:
-                    content = result["choices"][0]["message"]["content"]
-                    if content and len(content.strip()) > 0:
+                    message = result["choices"][0].get("message", {})
+                    content = message.get("content")
+                    reasoning_content = message.get("reasoning_content")
+                    if ((content and content.strip()) or
+                            (reasoning_content and reasoning_content.strip())):
                         return {
                             "success": True,
                             "message": f"{display_name} API连接测试成功"

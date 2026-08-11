@@ -46,6 +46,8 @@ services:
       MEMORY_ENABLED: "true"
       # Docker环境标识
       DOCKER_CONTAINER: "true"
+      # 自托管版本不连接外部授权服务，直接开放本地功能
+      LOCAL_LICENSE_BYPASS: "true"
       # API配置
       API_HOST: "0.0.0.0"
       API_PORT: "8000"
@@ -215,4 +217,3 @@ networks:
   tradingagents-network:
     driver: bridge
     name: tradingagents-network
-

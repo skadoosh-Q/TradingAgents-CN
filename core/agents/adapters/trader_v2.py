@@ -254,6 +254,8 @@ class TraderV2(TraderAgent):
         )
         
         if prompt:
+            from core.agents.holding_context import append_holding_context
+            prompt = append_holding_context(prompt, state)
             logger.info(f"✅ 从模板系统获取交易员 v2.0 用户提示词 (长度: {len(prompt)})")
             logger.info(f"📝 用户提示词前500字符:\n{prompt[:500]}...")
             return prompt
@@ -323,7 +325,8 @@ class TraderV2(TraderAgent):
 不构成买卖操作建议。投资有风险，决策需谨慎。投资者应根据自身情况，结合
 专业投资顾问意见，独立做出投资决策。"""
         
-        return prompt
+        from core.agents.holding_context import append_holding_context
+        return append_holding_context(prompt, state)
     
     def _get_company_name(self, ticker: str, market_info: dict) -> str:
         """获取公司名称"""
@@ -346,4 +349,3 @@ class TraderV2(TraderAgent):
             logger.warning(f"获取公司名称失败: {e}")
         
         return f"股票{ticker}"
-

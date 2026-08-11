@@ -588,10 +588,14 @@ class UnifiedNewsAnalyzer:
 
 
 def create_unified_news_tool(toolkit):
-    """创建统一新闻工具函数"""
-    analyzer = UnifiedNewsAnalyzer(toolkit)
+    """创建兼容旧 Agent 调用方式的统一新闻工具。"""
     
-    def get_stock_news_unified(stock_code: str, max_news: int = 100, model_info: str = ""):
+    def get_stock_news_unified(
+        stock_code: str,
+        max_news: int = 100,
+        model_info: str = "",
+        analysis_date: str = "",
+    ):
         """
         统一新闻获取工具
         
@@ -606,7 +610,14 @@ def create_unified_news_tool(toolkit):
         if not stock_code:
             return "❌ 错误: 未提供股票代码"
         
-        return analyzer.get_stock_news_unified(stock_code, max_news, model_info)
+        from core.tools.implementations.news.stock_news import (
+            get_stock_news_unified as core_news_tool,
+        )
+
+        return core_news_tool.invoke({
+            "ticker": stock_code,
+            "curr_date": analysis_date or datetime.now().strftime("%Y-%m-%d"),
+        })
     
     # 设置工具属性
     get_stock_news_unified.name = "get_stock_news_unified"

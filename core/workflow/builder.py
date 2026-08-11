@@ -190,7 +190,8 @@ class LegacyDependencyProvider:
                 temperature=self._config.get("quick_temperature", 0.1),
                 max_tokens=self._config.get("quick_max_tokens", 2000),
                 timeout=self._config.get("quick_timeout", 60),
-                api_key=quick_api_key
+                api_key=quick_api_key,
+                analysis_role="quick",
             )
 
             # 创建深度模型
@@ -201,7 +202,8 @@ class LegacyDependencyProvider:
                 temperature=self._config.get("deep_temperature", 0.1),
                 max_tokens=self._config.get("deep_max_tokens", 4000),
                 timeout=self._config.get("deep_timeout", 120),
-                api_key=deep_api_key
+                api_key=deep_api_key,
+                analysis_role="deep",
             )
 
             logger.info("[依赖提供者] LLM 实例创建成功")
@@ -260,7 +262,8 @@ class LegacyDependencyProvider:
             temperature=temperature,
             max_tokens=max_tokens,
             timeout=timeout,
-            api_key=api_key
+            api_key=api_key,
+            analysis_role=llm_type,
         )
 
     def _get_llm_config_from_db(self) -> Dict[str, Any]:
@@ -1276,6 +1279,7 @@ class WorkflowBuilder:
             
             # 持仓信息
             position_info: Annotated[dict, merge_dict]
+            holding_info: Annotated[dict, merge_dict]
             stock_analysis_report: Annotated[dict, merge_dict]
             user_preference: Annotated[str, keep_non_empty]
             analysis_params: Annotated[dict, merge_dict]

@@ -414,7 +414,9 @@ export const configApi = {
 
   // 删除大模型配置
   deleteLLMConfig(provider: string, modelName: string): Promise<{ message: string }> {
-    return ApiClient.delete(`/api/config/llm/${provider}/${modelName}`)
+    const providerPath = encodeURIComponent(provider)
+    const modelPath = modelName.split('/').map(encodeURIComponent).join('/')
+    return ApiClient.delete(`/api/config/llm/${providerPath}/${modelPath}`)
   },
 
   // 设置默认大模型

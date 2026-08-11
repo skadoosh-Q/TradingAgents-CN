@@ -34,8 +34,9 @@ RUN mkdir -p /app/logs /app/data /app/config && \
         fonts-noto-cjk \
         wget \
         xvfb && \
-    # 根据架构设置变量
-    if [ "$TARGETARCH" = "arm64" ]; then \
+    # 旧版 Docker Compose 可能不会传入 TARGETARCH，回退到容器实际架构
+    BUILD_ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
+    if [ "$BUILD_ARCH" = "arm64" ]; then \
         PANDOC_ARCH="arm64"; \
         WKHTMLTOPDF_ARCH="arm64"; \
     else \

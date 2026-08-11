@@ -11,7 +11,8 @@ from bson import ObjectId
 
 from app.core.database import get_mongo_db
 from app.routers.auth_db import get_current_user
-from app.services.license_service import get_license_service, LicenseInfo
+from app.services.license_service import get_license_service, get_local_license_info, LicenseInfo
+from app.core.config import settings
 
 logger = logging.getLogger("app.core.permissions")
 
@@ -40,6 +41,9 @@ async def get_license_info(
         
     注意：设备ID由后端基于硬件信息自动生成，用户无法获取或复制
     """
+    if settings.LOCAL_LICENSE_BYPASS:
+        return get_local_license_info(user.get("email", ""))
+
     license_service = get_license_service()
     
     # 优先使用请求头中的 token
@@ -138,4 +142,3 @@ PRO_FEATURES = [
     "batch_analysis",          # 批量分析
     "export_reports",          # 导出报告
 ]
-

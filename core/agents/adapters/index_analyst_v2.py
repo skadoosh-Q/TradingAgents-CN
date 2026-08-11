@@ -18,6 +18,23 @@ logger = logging.getLogger(__name__)
 
 # ==================== 缓存配置 ====================
 INDEX_REPORT_CACHE_TTL_HOURS = 1  # 大盘分析报告缓存有效期（小时）
+INDEX_REPORT_CACHE_SYMBOL = "market_v2_free_v1"
+
+_INVALID_INDEX_REPORT_MARKERS = (
+    "无法获取任何有效的市场数据",
+    "绝大多数数据维度未能成功获取",
+    "本次分析因数据源不可用",
+    "Tushare积分权限限制",
+)
+
+
+def _is_cacheable_index_report(report: Any) -> bool:
+    """仅缓存包含有效市场分析的报告，避免短暂数据故障被持续放大。"""
+    return (
+        isinstance(report, str)
+        and len(report) > 100
+        and not any(marker in report for marker in _INVALID_INDEX_REPORT_MARKERS)
+    )
 
 
 def _get_cache_manager():
@@ -45,21 +62,23 @@ def _get_cached_index_report(trade_date: str) -> Optional[str]:
         return None
 
     try:
-        # 大盘分析不依赖具体股票，使用 "market_v2" 作为 symbol 区分 v1.x
+        # 缓存命名空间包含数据实现版本，防止复用旧 Tushare 报告。
         # 🔑 确保 max_age_hours 是整数
         max_age_hours = int(INDEX_REPORT_CACHE_TTL_HOURS) if INDEX_REPORT_CACHE_TTL_HOURS else 1
         
         cache_key = cache.find_cached_analysis_report(
             report_type="index_report",
-            symbol="market_v2",
+            symbol=INDEX_REPORT_CACHE_SYMBOL,
             trade_date=trade_date,
             max_age_hours=max_age_hours
         )
         if cache_key:
             report = cache.load_analysis_report(cache_key)
-            if report and len(report) > 100:
+            if _is_cacheable_index_report(report):
                 logger.info(f"📦 [大盘分析师v2] 命中缓存: @ {trade_date}")
                 return report
+            if report:
+                logger.warning(f"⚠️ [大盘分析师v2] 忽略无效缓存报告: @ {trade_date}")
     except Exception as e:
         logger.warning(f"⚠️ 读取大盘分析缓存失败: {e}")
 
@@ -86,10 +105,14 @@ def _save_index_report_to_cache(trade_date: str, report: str) -> bool:
         logger.debug(f"💾 [大盘分析师v2] 准备缓存: trade_date={trade_date}, "
                      f"trade_date_type={type(trade_date).__name__}, report_len={len(report)}")
 
+        if not _is_cacheable_index_report(report):
+            logger.warning(f"⚠️ [大盘分析师v2] 报告数据无效，不写入缓存: @ {trade_date}")
+            return False
+
         cache.save_analysis_report(
             report_type="index_report",
             report_data=report,
-            symbol="market_v2",
+            symbol=INDEX_REPORT_CACHE_SYMBOL,
             trade_date=trade_date
         )
         logger.info(f"💾 [大盘分析师v2] 报告已缓存: @ {trade_date} ({INDEX_REPORT_CACHE_TTL_HOURS}小时有效)")
@@ -472,4 +495,3 @@ class IndexAnalystV2(AnalystAgent):
                 logger.debug(f"获取公司名称失败: {e}")
         
         return f"股票{ticker}"
-

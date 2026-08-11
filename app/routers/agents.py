@@ -74,6 +74,7 @@ class AgentCategory(BaseModel):
 
 
 from app.services.license_service import get_license_service
+from app.core.config import settings
 
 logger = logging.getLogger("webapi")
 
@@ -100,6 +101,9 @@ async def get_user_license_tier(
     
     注意：设备ID由后端基于硬件信息自动生成，用户无法获取或复制
     """
+    if settings.LOCAL_LICENSE_BYPASS:
+        return "enterprise"
+
     logger.info(f"🔍 检查用户许可证: user_id={user.get('id')}, has_x_app_token={bool(x_app_token)}")
 
     if not x_app_token:
@@ -453,4 +457,3 @@ async def update_agent_execution_config(
     except Exception as e:
         logger.error(f"[API] ❌ 更新 Agent 执行配置失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
-

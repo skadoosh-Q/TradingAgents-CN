@@ -288,7 +288,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Files, TrendCharts, Check, Close, PieChart, Grid } from '@element-plus/icons-vue'
 import { ANALYSTS, DEFAULT_ANALYSTS, convertAnalystNamesToIds } from '@/constants/analysts'
@@ -298,10 +298,15 @@ import { useAuthStore } from '@/stores/auth'
 import ModelConfig from '@/components/ModelConfig.vue'
 import { getMarketByStockCode } from '@/utils/market'
 import { validateStockCode } from '@/utils/stockValidator'
+import {
+  restoreAnalysisModelSelection,
+  saveAnalysisModelSelection
+} from '@/utils/analysisModelSelection'
 
 // 路由实例（必须在顶层调用）
 const router = useRouter()
 const route = useRoute()
+const authStore = useAuthStore()
 
 const submitting = ref(false)
 const stockInput = ref('')
@@ -314,6 +319,7 @@ const modelSettings = ref({
   quickAnalysisModel: 'qwen-turbo',
   deepAnalysisModel: 'qwen-max'
 })
+const modelSettingsInitialized = ref(false)
 
 // 可用的模型列表（从配置中获取）
 const availableModels = ref<any[]>([])
@@ -396,6 +402,12 @@ const initializeModelSettings = async () => {
     const llmConfigs = await configApi.getLLMConfigs()
     availableModels.value = llmConfigs.filter((config: any) => config.enabled)
 
+    modelSettings.value = restoreAnalysisModelSelection(
+      authStore.user?.id,
+      availableModels.value,
+      modelSettings.value
+    )
+
     console.log('✅ [批量分析] 加载模型配置成功:', {
       quick: modelSettings.value.quickAnalysisModel,
       deep: modelSettings.value.deepAnalysisModel,
@@ -411,15 +423,24 @@ const initializeModelSettings = async () => {
       quick: modelSettings.value.quickAnalysisModel,
       deep: modelSettings.value.deepAnalysisModel
     })
+  } finally {
+    modelSettingsInitialized.value = true
   }
 }
+
+watch(
+  [() => modelSettings.value.quickAnalysisModel, () => modelSettings.value.deepAnalysisModel],
+  () => {
+    if (!modelSettingsInitialized.value) return
+    saveAnalysisModelSelection(authStore.user?.id, availableModels.value, modelSettings.value)
+  }
+)
 
 // 页面初始化
 onMounted(async () => {
   await initializeModelSettings()
 
   // 🆕 从用户偏好加载默认设置
-  const authStore = useAuthStore()
   const userPrefs = authStore.user?.preferences
 
   console.log('🔍 [批量分析] 调试信息:', {
@@ -526,6 +547,9 @@ const submitBatchAnalysis = async () => {
 
     submitting.value = true
 
+    // 和单股分析共用同一份用户缓存，记录本次实际提交的模型。
+    saveAnalysisModelSelection(authStore.user?.id, availableModels.value, modelSettings.value)
+
     // 准备批量分析请求参数（真实API调用）
     const batchRequest = {
       title: '',  // 基础信息已移除，不再使用
@@ -592,7 +616,6 @@ const submitBatchAnalysis = async () => {
 
 const resetForm = () => {
   // 从用户偏好加载默认值
-  const authStore = useAuthStore()
   const userPrefs = authStore.user?.preferences
 
   Object.assign(batchForm, {

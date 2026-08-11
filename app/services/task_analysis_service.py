@@ -144,11 +144,18 @@ class TaskAnalysisService:
 
             # �🔑 关键：从 kwargs 中提取 step_name（简短名称）
             step_name = kwargs.get("step_name", "")
+            partial_reports = kwargs.get("partial_reports") or {}
 
             # 更新任务对象
             task.progress = progress
             task.current_step = step_name or message  # ✅ 使用 step_name 而不是 message
             task.message = message  # ✅ 保存详细描述到 message 字段
+            if isinstance(partial_reports, dict):
+                task.partial_reports.update({
+                    key: value.strip()
+                    for key, value in partial_reports.items()
+                    if isinstance(value, str) and value.strip()
+                })
 
             # 保存到数据库
             await self._update_task(task)
@@ -2092,4 +2099,3 @@ def get_task_analysis_service() -> TaskAnalysisService:
     if _task_service is None:
         _task_service = TaskAnalysisService()
     return _task_service
-

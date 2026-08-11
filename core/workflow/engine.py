@@ -241,8 +241,14 @@ class WorkflowEngine:
                         progress_info = self._get_node_progress_info(node_name)
                         progress, message, step_name = progress_info
 
+                        partial_reports = self._extract_partial_reports(node_update)
                         if progress is not None:
-                            self._report_progress(progress, message, step_name)
+                            self._report_progress(
+                                progress,
+                                message,
+                                step_name,
+                                partial_reports=partial_reports,
+                            )
 
                         # 累积状态更新
                         if isinstance(node_update, dict):
@@ -443,6 +449,63 @@ class WorkflowEngine:
         friendly_name = node_name.replace("_v2", "").replace("_", " ").title()
         return (50, f"🔍 正在执行: {friendly_name}", friendly_name)
 
+    @staticmethod
+    def _extract_partial_reports(node_update: Any) -> Dict[str, str]:
+        """从单个工作流节点更新中提取可展示的已完成报告。"""
+        if not isinstance(node_update, dict):
+            return {}
+
+        def as_text(value: Any) -> str:
+            if isinstance(value, str):
+                return value.strip()
+            if isinstance(value, dict):
+                for key in ("content", "markdown", "text", "report", "message"):
+                    text = value.get(key)
+                    if isinstance(text, str) and text.strip():
+                        return text.strip()
+            return ""
+
+        reports = {}
+        direct_fields = (
+            "index_report", "sector_report", "market_report", "sentiment_report",
+            "news_report", "fundamentals_report", "bull_report", "bear_report",
+            "investment_plan", "trader_investment_plan", "risk_assessment",
+            "final_trade_decision",
+        )
+        aliases = {
+            "bull_report": "bull_researcher",
+            "bear_report": "bear_researcher",
+            "investment_plan": "research_team_decision",
+            "risk_assessment": "risk_management_decision",
+        }
+        for field in direct_fields:
+            text = as_text(node_update.get(field))
+            if text:
+                reports[aliases.get(field, field)] = text
+
+        nested_fields = {
+            "investment_debate_state": {
+                "bull_history": "bull_researcher",
+                "bear_history": "bear_researcher",
+                "judge_decision": "research_team_decision",
+            },
+            "risk_debate_state": {
+                "risky_history": "risky_analyst",
+                "safe_history": "safe_analyst",
+                "neutral_history": "neutral_analyst",
+                "judge_decision": "risk_management_decision",
+            },
+        }
+        for state_key, mapping in nested_fields.items():
+            nested = node_update.get(state_key)
+            if not isinstance(nested, dict):
+                continue
+            for source_key, report_key in mapping.items():
+                text = as_text(nested.get(source_key))
+                if text:
+                    reports[report_key] = text
+        return reports
+
     async def execute_async(
         self,
         inputs: Dict[str, Any],
@@ -493,10 +556,16 @@ class WorkflowEngine:
                         progress_info = self._get_node_progress_info(node_name)
                         progress, message, step_name = progress_info
 
+                        partial_reports = self._extract_partial_reports(node_update)
                         if progress is not None:
                             # 🔥 关键：调用 progress_callback 会触发取消检查
                             # 如果任务被取消，wrapped_progress_callback 会抛出 TaskCancelledException
-                            self._report_progress(progress, message, step_name)
+                            self._report_progress(
+                                progress,
+                                message,
+                                step_name,
+                                partial_reports=partial_reports,
+                            )
 
                         # 累积状态更新
                         if isinstance(node_update, dict):

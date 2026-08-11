@@ -369,12 +369,15 @@ async def get_task_status_new(
 
         # 🔥 优先从 MongoDB 查询（真实数据源，Worker 进程会更新这里）
         # 因为 Worker 进程和 API 进程是分开的，内存状态管理器不共享
-        from app.core.database import get_mongo_db
+        from app.core.database import get_mongo_db_sync
         from bson import ObjectId
-        db = get_mongo_db()
+        db = get_mongo_db_sync()
 
         # 首先尝试从 unified_analysis_tasks 集合中查找（v2 引擎任务）
-        unified_task = await db.unified_analysis_tasks.find_one({"task_id": task_id})
+        unified_task = await asyncio.to_thread(
+            db.unified_analysis_tasks.find_one,
+            {"task_id": task_id}
+        )
         if unified_task:
             logger.info(f"✅ [STATUS] 从unified_analysis_tasks找到任务: {task_id}")
 
@@ -555,6 +558,7 @@ async def get_task_status_new(
 
                 # 添加结果数据（如果有）
                 "result_data": unified_task.get("result"),
+                "partial_reports": unified_task.get("partial_reports", {}),
                 "error_message": error_message,  # 🔥 保留原始错误消息
                 "parameters": task_params,  # 添加参数信息
                 "execution_time": unified_task.get("execution_time"),
@@ -582,7 +586,10 @@ async def get_task_status_new(
             }
 
         # 然后从analysis_tasks集合中查找（旧版任务）
-        task_result = await db.analysis_tasks.find_one({"task_id": task_id})
+        task_result = await asyncio.to_thread(
+            db.analysis_tasks.find_one,
+            {"task_id": task_id}
+        )
 
         if task_result:
                 logger.info(f"✅ [STATUS] 从analysis_tasks找到任务: {task_id}")
@@ -662,7 +669,10 @@ async def get_task_status_new(
                 }
 
         # 如果analysis_tasks中没有找到，再从analysis_reports集合中查找（已完成的任务）
-        mongo_result = await db.analysis_reports.find_one({"task_id": task_id})
+        mongo_result = await asyncio.to_thread(
+            db.analysis_reports.find_one,
+            {"task_id": task_id}
+        )
 
         if mongo_result:
             logger.info(f"✅ [STATUS] 从analysis_reports找到任务: {task_id}")
@@ -757,11 +767,14 @@ async def get_task_result(
             # 内存中没有找到，尝试从MongoDB中查找
             logger.info(f"📊 [RESULT] 内存中未找到，尝试从MongoDB查找: {task_id}")
 
-            from app.core.database import get_mongo_db
-            db = get_mongo_db()
+            from app.core.database import get_mongo_db_sync
+            db = get_mongo_db_sync()
 
             # 🔧 首先从 unified_analysis_tasks 集合中查找（v2 引擎任务）
-            unified_task = await db.unified_analysis_tasks.find_one({"task_id": task_id})
+            unified_task = await asyncio.to_thread(
+                db.unified_analysis_tasks.find_one,
+                {"task_id": task_id}
+            )
             if unified_task and unified_task.get("result"):
                 logger.info(f"✅ [RESULT] 从unified_analysis_tasks找到结果: {task_id}")
 
@@ -832,15 +845,25 @@ async def get_task_result(
 
             # 如果 unified_analysis_tasks 中没有找到，再从 analysis_reports 集合中查找
             if not result_data:
-                mongo_result = await db.analysis_reports.find_one({"task_id": task_id})
+                mongo_result = await asyncio.to_thread(
+                    db.analysis_reports.find_one,
+                    {"task_id": task_id}
+                )
 
                 if not mongo_result:
                     # 兼容旧数据：旧记录可能没有 task_id，但 analysis_id 存在于 analysis_tasks.result
-                    tasks_doc_for_id = await db.analysis_tasks.find_one({"task_id": task_id}, {"result.analysis_id": 1})
+                    tasks_doc_for_id = await asyncio.to_thread(
+                        db.analysis_tasks.find_one,
+                        {"task_id": task_id},
+                        {"result.analysis_id": 1}
+                    )
                     analysis_id = tasks_doc_for_id.get("result", {}).get("analysis_id") if tasks_doc_for_id else None
                     if analysis_id:
                         logger.info(f"🔎 [RESULT] 按analysis_id兜底查询 analysis_reports: {analysis_id}")
-                        mongo_result = await db.analysis_reports.find_one({"analysis_id": analysis_id})
+                        mongo_result = await asyncio.to_thread(
+                            db.analysis_reports.find_one,
+                            {"analysis_id": analysis_id}
+                        )
             else:
                 # 如果从 unified_analysis_tasks 找到了结果，就不需要查询 analysis_reports
                 mongo_result = None
@@ -886,7 +909,8 @@ async def get_task_result(
                 logger.info(f"📊 [RESULT] key_points: {result_data.get('key_points', [])[:3]}")
             else:
                 # 兜底：analysis_tasks 集合中的 result 字段
-                tasks_doc = await db.analysis_tasks.find_one(
+                tasks_doc = await asyncio.to_thread(
+                    db.analysis_tasks.find_one,
                     {"task_id": task_id},
                     {"result": 1, "symbol": 1, "stock_code": 1, "created_at": 1, "completed_at": 1}
                 )

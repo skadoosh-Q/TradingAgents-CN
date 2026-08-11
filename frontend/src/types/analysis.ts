@@ -26,6 +26,9 @@ export interface AnalysisParameters {
   custom_prompt?: string
   include_charts: boolean
   language: 'zh-CN' | 'en-US'
+  is_holding?: boolean
+  holding_shares?: number
+  holding_cost_price?: number
 }
 
 // 分析结果

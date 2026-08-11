@@ -45,8 +45,17 @@
       </el-descriptions>
     </el-card>
 
-    <!-- App Token 配置和获取授权步骤 -->
-    <el-row :gutter="24" style="margin-top: 16px">
+    <el-alert
+      v-if="licenseInfo?.local_bypass"
+      title="本地部署已直接开放全部功能，无需配置 App Token"
+      type="success"
+      :closable="false"
+      show-icon
+      style="margin-top: 16px"
+    />
+
+    <!-- 非本地放行模式保留原有 App Token 配置 -->
+    <el-row v-else :gutter="24" style="margin-top: 16px">
       <!-- 左侧：App Token 配置 -->
       <el-col :span="18">
         <el-card>
@@ -431,4 +440,3 @@ onMounted(() => {
   }
 }
 </style>
-

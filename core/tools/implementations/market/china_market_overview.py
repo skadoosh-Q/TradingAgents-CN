@@ -1,22 +1,19 @@
-"""
-中国市场概览工具 (Tushare版)
-替代旧版的 get_china_market_overview_legacy
-"""
+"""中国市场概览工具。"""
+import asyncio
 import logging
-import pandas as pd
-from typing import Annotated, Dict, Any, Optional
+from datetime import datetime, timedelta
+from typing import Annotated
 from langchain_core.tools import tool
-from datetime import datetime
 
 from core.tools.base import register_tool
-from tradingagents.dataflows.providers.china.tushare import TushareProvider
+from core.data_sources import get_free_china_market_data
 
 logger = logging.getLogger(__name__)
 
 @tool
 @register_tool(
     tool_id="get_china_market_overview",
-    name="中国市场概览 (Tushare)",
+    name="中国市场概览",
     description="获取中国股市主要指数行情概览（上证、深证、创业板、科创50）",
     category="market",
     is_online=True,
@@ -38,12 +35,7 @@ def get_china_market_overview(
     logger.info(f"📊 [中国市场概览] 开始获取数据, 日期: {curr_date}")
     
     try:
-        # 初始化 Tushare Provider
-        provider = TushareProvider()
-        if not provider.connect_sync():
-            return "❌ 无法连接到 Tushare 数据源，请检查 API Token 配置。"
-            
-        api = provider.api
+        provider = get_free_china_market_data()
         
         # 定义主要指数代码
         indices = {
@@ -62,17 +54,24 @@ def get_china_market_overview(
         
         for code, name in indices.items():
             try:
-                # 🔑 获取指定日期的数据，如果当天没有（如周末），向前找最近的一天
-                # 使用 end_date 参数，limit=1 会返回指定日期之前最近的一条数据
                 curr_date_clean = curr_date.replace('-', '')
-                df = api.index_daily(ts_code=code, end_date=curr_date_clean, limit=1)
+                start_date = (
+                    datetime.strptime(curr_date_clean, "%Y%m%d") - timedelta(days=10)
+                ).strftime("%Y%m%d")
+                df = asyncio.run(
+                    provider.get_index_daily(
+                        ts_code=code,
+                        start_date=start_date,
+                        end_date=curr_date_clean,
+                    )
+                )
                 
                 if df is not None and not df.empty:
-                    row = df.iloc[0]
+                    row = df.sort_values("trade_date").iloc[-1]
                     trade_date = row['trade_date']
                     close = row['close']
-                    change = row['change']
-                    pct_chg = row['pct_chg']
+                    change = close - row.get('pre_close', close / (1 + row.get('pct_chg', 0) / 100))
+                    pct_chg = row.get('pct_chg', 0)
                     vol = row['vol']
                     amount = row['amount']
                     
@@ -119,7 +118,7 @@ def get_china_market_overview(
 {chr(10).join(results)}
 
 ---
-*数据来源: Tushare Pro*
+*数据来源: 免费市场数据接口（AKShare/公开行情，带缓存降级）*
 """
         logger.info(f"✅ [中国市场概览] 获取成功")
         return report

@@ -1,4 +1,4 @@
-import { request } from './request'
+import { request, type RequestConfig } from './request'
 
 export interface NotificationItem {
   id: string
@@ -22,7 +22,9 @@ export const notificationsApi = {
   async getUnreadCount(): Promise<{ success: boolean; data: { count: number } }> {
     // 后端尚未提供时兜底为0
     try {
-      return await request.get('/api/notifications/unread_count')
+      return await request.get('/api/notifications/unread_count', {
+        skipErrorHandler: true
+      } as RequestConfig)
     } catch {
       return { success: true, data: { count: 0 } }
     }
@@ -36,7 +38,9 @@ export const notificationsApi = {
     if (params?.type) query.set('type', params.type)
     const url = query.toString() ? `/api/notifications?${query.toString()}` : '/api/notifications'
     try {
-      return await request.get(url)
+      return await request.get(url, {
+        skipErrorHandler: true
+      } as RequestConfig)
     } catch {
       return { success: true, data: { items: [], total: 0, page: params?.page ?? 1, page_size: params?.page_size ?? 20 } }
     }
@@ -58,4 +62,3 @@ export const notificationsApi = {
     }
   }
 }
-

@@ -37,6 +37,31 @@ class LicenseInfo(BaseModel):
     cache_expires_at: Optional[datetime] = None
     # 离线模式
     offline_mode: bool = False  # 是否处于离线模式（使用过期缓存）
+    local_bypass: bool = False  # 自托管版本直接授权
+
+
+LOCAL_LICENSE_FEATURES = [
+    "email_notification",
+    "watchlist_groups",
+    "scheduled_analysis",
+    "portfolio_analysis",
+    "trade_review",
+    "advanced_screening",
+    "batch_analysis",
+    "export_reports",
+]
+
+
+def get_local_license_info(email: str = "") -> LicenseInfo:
+    """Return unrestricted local authorization without contacting a license server."""
+    return LicenseInfo(
+        email=email,
+        plan="enterprise",
+        features=LOCAL_LICENSE_FEATURES.copy(),
+        device_registered=True,
+        is_valid=True,
+        local_bypass=True,
+    )
 
 
 class LicenseService:
@@ -499,4 +524,3 @@ def get_license_service() -> LicenseService:
     if _license_service is None:
         _license_service = LicenseService()
     return _license_service
-

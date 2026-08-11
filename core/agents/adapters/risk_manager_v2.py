@@ -276,12 +276,14 @@ class RiskManagerV2(ManagerAgent):
         )
         
         if prompt:
+            from core.agents.holding_context import append_holding_context
+            prompt = append_holding_context(prompt, state)
             logger.info(f"✅ 从模板系统获取风险管理者用户提示词 (长度: {len(prompt)})")
             return prompt
         
         # 降级：使用默认用户提示词（优化后：只包含任务描述和数据，不包含格式要求）
         logger.info("⚠️ 使用降级用户提示词")
-        return f"""请综合分析 {company_name}（{ticker}）的投资风险：
+        prompt = f"""请综合分析 {company_name}（{ticker}）的投资风险：
 
 📊 **基本信息**：
 - 股票代码：{ticker}
@@ -304,6 +306,8 @@ class RiskManagerV2(ManagerAgent):
 {debate_summary or ''}
 
 请基于以上信息，综合分析并给出风险评估和风险控制建议。"""
+        from core.agents.holding_context import append_holding_context
+        return append_holding_context(prompt, state)
 
     def _get_required_inputs(self) -> List[str]:
         """

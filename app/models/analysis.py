@@ -4,7 +4,7 @@
 
 from datetime import datetime
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict, field_serializer
+from pydantic import BaseModel, Field, ConfigDict, field_serializer, model_validator
 from enum import Enum
 from bson import ObjectId
 from .user import PyObjectId
@@ -63,6 +63,10 @@ class AnalysisParameters(BaseModel):
     # 模型配置
     quick_analysis_model: Optional[str] = "qwen-turbo"
     deep_analysis_model: Optional[str] = "qwen-max"
+    # 单股分析中的现有持仓背景
+    is_holding: bool = False
+    holding_shares: Optional[int] = Field(default=None, gt=0)
+    holding_cost_price: Optional[float] = Field(default=None, gt=0)
     # 引擎选择（默认使用 v2.0 引擎）
     engine: AnalysisEngine = Field(
         default=AnalysisEngine.V2,
@@ -73,6 +77,14 @@ class AnalysisParameters(BaseModel):
         default=None,
         description="工作流 ID (仅 unified 引擎有效)，不指定则使用系统默认工作流"
     )
+
+    @model_validator(mode="after")
+    def validate_holding_details(self):
+        if self.is_holding and (
+            self.holding_shares is None or self.holding_cost_price is None
+        ):
+            raise ValueError("已持仓时必须填写持有股数和持仓成本价")
+        return self
 
 
 class AnalysisResult(BaseModel):
@@ -329,6 +341,10 @@ class UnifiedAnalysisTask(BaseModel):
 
     # 结果
     result: Optional[Dict[str, Any]] = Field(None, description="分析结果（JSON格式）")
+    partial_reports: Dict[str, str] = Field(
+        default_factory=dict,
+        description="已完成的阶段报告，供分析进行中实时展示",
+    )
 
     # 元数据
     created_at: datetime = Field(default_factory=now_tz, description="创建时间")
