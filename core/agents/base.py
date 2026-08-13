@@ -1029,6 +1029,16 @@ class BaseAgent(ABC):
         Returns:
             提示词文本，如果获取失败则返回 fallback_prompt
         """
+        def append_price_context(prompt: Optional[str]) -> Optional[str]:
+            if not prompt or prompt_type != "user" or not state or not state.get("price_context"):
+                return prompt
+            return (
+                f"{prompt.rstrip()}\n\n## 价格口径（系统固定快照）\n"
+                f"{state['price_context']}\n"
+                "必须保留价格日期和口径：盘中快照只能称为盘中参考价；完整日线价格只能称为最近收盘价。"
+                "不得把最近收盘价写成当前实时价格，也不得用未收盘的盘中数据重算日线技术指标。"
+            )
+
         try:
             if prompt_type == "user":
                 from tradingagents.utils.template_client import get_user_prompt as get_prompt_func
@@ -1036,14 +1046,17 @@ class BaseAgent(ABC):
                 from tradingagents.utils.template_client import get_agent_prompt as get_prompt_func
         except (ImportError, KeyError) as e:
             logger.warning(f"无法导入模板系统: {e}")
-            return fallback_prompt
+            return append_price_context(fallback_prompt)
 
         try:
             # 🆕 自动从 state 中提取系统变量（由工作流引擎准备）
             if state:
                 system_vars = [
                     "current_price", "industry", "market_name",
-                    "currency_name", "currency_symbol", "current_date", "start_date"
+                    "currency_name", "currency_symbol", "current_date", "start_date",
+                    "price_as_of", "price_trade_date", "price_type", "price_label",
+                    "price_source", "price_market_phase", "price_context",
+                    "latest_completed_close", "latest_completed_close_date"
                 ]
                 for var in system_vars:
                     if var in state and var not in variables:
@@ -1108,12 +1121,11 @@ class BaseAgent(ABC):
                 # 🔍 诊断日志：打印提示词的前200字符，检查模板内容
                 prompt_preview = prompt[:200] if len(prompt) > 200 else prompt
                 logger.info(f"🔍 [_get_prompt_from_template] 提示词预览: {prompt_preview}")
-                return prompt
+                return append_price_context(prompt)
             else:
                 logger.warning(f"模板系统返回空提示词，使用降级提示词")
-                return fallback_prompt
+                return append_price_context(fallback_prompt)
 
         except Exception as e:
             logger.warning(f"从模板系统获取提示词失败: {e}")
-            return fallback_prompt
-
+            return append_price_context(fallback_prompt)

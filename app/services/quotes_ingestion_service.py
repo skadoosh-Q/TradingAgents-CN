@@ -396,6 +396,7 @@ class QuotesIngestionService:
                         "pre_close": q.get("pre_close"),
                         "trade_date": trade_date,
                         "updated_at": updated_at,
+                        "source": source,
                     }},
                     upsert=True,
                 )
@@ -653,4 +654,3 @@ class QuotesIngestionService:
                 records_count=0,
                 error_msg=str(e)
             )
-

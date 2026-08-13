@@ -503,30 +503,20 @@ class WorkflowAPI:
             system_vars["company_name"] = company_name
             system_vars["industry"] = industry
 
-            # 2. 从数据库获取当前价格
+            # 2. 为本次分析冻结一个带时点和口径的价格快照
             current_price = "未知"
 
             if is_china:
                 try:
-                    db = get_mongo_db_sync()  # 使用同步版本
-                    logger.info(f"🔍 [价格查询] 开始查询股票 {stock_code} 的价格...")
+                    from app.services.analysis_price_service import AnalysisPriceService
 
-                    # 优先从 market_quotes 获取最新价格
-                    logger.info(f"🔍 [价格查询] 步骤1: 从 market_quotes 查询...")
-                    quote = db.market_quotes.find_one(
-                        {"$or": [{"code": stock_code}, {"symbol": stock_code}]},
-                        {"_id": 0, "close": 1, "trade_date": 1},
-                        sort=[("trade_date", -1)]  # 按日期降序，获取最新数据
-                    )
-                    logger.info(f"🔍 [价格查询] market_quotes 查询结果: {quote}")
+                    price_snapshot = AnalysisPriceService().get_snapshot(stock_code)
+                    system_vars.update(price_snapshot)
+                    current_price = price_snapshot["current_price"]
 
-                    if quote and quote.get("close"):
-                        current_price = str(quote["close"])
-                        logger.info(f"✅ [系统变量-数据库] 当前价格: ¥{current_price} (日期: {quote.get('trade_date', 'N/A')})")
-                    else:
-                        logger.info(f"🔍 [价格查询] market_quotes 未找到数据，尝试步骤2...")
-                        # 回退到 stock_basic_info 的 current_price 字段
-                        logger.info(f"🔍 [价格查询] 步骤2: 从 stock_basic_info 查询...")
+                    if current_price == "未知":
+                        logger.info(f"🔍 [价格查询] 行情快照无价格，回退到 stock_basic_info...")
+                        db = get_mongo_db_sync()
                         stock_info = db.stock_basic_info.find_one(
                             {"$or": [{"code": stock_code}, {"symbol": stock_code}]},
                             {"_id": 0, "current_price": 1}
@@ -535,7 +525,17 @@ class WorkflowAPI:
 
                         if stock_info and stock_info.get("current_price"):
                             current_price = str(stock_info["current_price"])
-                            logger.info(f"✅ [系统变量-数据库] 当前价格(备用): ¥{current_price}")
+                            system_vars.update({
+                                "current_price": current_price,
+                                "price_type": "fallback_unknown_time",
+                                "price_label": "备用历史价格",
+                                "price_as_of": "未知",
+                                "price_source": "stock_basic_info",
+                                "price_context": (
+                                    f"备用历史价格 {current_price}，时间未知，来源 stock_basic_info。"
+                                    "不得将其表述为实时价或当日收盘价。"
+                                ),
+                            })
                         else:
                             logger.warning(f"⚠️ 数据库中未找到股票 {stock_code} 的价格信息")
                 except Exception as e:

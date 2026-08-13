@@ -788,7 +788,9 @@ class AKShareProvider(BaseStockDataProvider):
                     logger.error(f"❌ 批量获取实时行情失败，已达最大重试次数: {e}")
                     return {}
 
-    async def get_stock_quotes(self, code: str) -> Optional[Dict[str, Any]]:
+    async def get_stock_quotes(
+        self, code: str, fallback_to_batch: bool = True
+    ) -> Optional[Dict[str, Any]]:
         """
         获取单个股票实时行情
 
@@ -910,6 +912,8 @@ class AKShareProvider(BaseStockDataProvider):
                     # 非连接错误或已达到最大重试次数
                     if attempt >= max_retries - 1:
                         logger.error(f"❌ 获取{code}实时行情失败，已达最大重试次数 ({max_retries}): {e}")
+                        if not fallback_to_batch:
+                            return None
                         # 🔥 回退到批量接口获取全市场数据（避免浪费接口调用）
                         logger.info(f"🔄 尝试使用批量接口获取全市场实时行情（包含 {code}）...")
                         try:

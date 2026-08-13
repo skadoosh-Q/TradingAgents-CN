@@ -14,6 +14,7 @@
 
 ## 已二次开发
 已基于原项目的`pro/main`分支`v2.0.1`使用`AI`二次开发。
+- 本分支只使用根目录 `docker-compose.yml` 从当前源码构建。已移除指向原作者旧版 Docker Hub 镜像的 `docker-compose.hub.nginx*.yml`，避免误启动旧版界面和后端。
 - 本地部署使用不校验appToken。
 - 新闻的获取，失效取"上周一至分析日";分析时先获取最新新闻合并到数据库;近期无新闻时允许提供 30 天历史背景，但明确禁止当作近期催化剂。
 - `DeepSeek V4`的兼容问题。
@@ -86,15 +87,23 @@
 
 
 
-#### 📥 安装部署
+#### 📥 Docker 源码部署
 
-**三种部署方式，任选其一**：
+当前二次开发版本统一使用根目录的 `docker-compose.yml`，支持 Apple Silicon ARM64 和 Linux/amd64。首次启动或源码更新后执行：
 
-| 部署方式 | 适用场景 | 难度 | 文档链接 |
-|---------|---------|------|---------|
-| 🟢 **绿色版** | Windows 用户、快速体验 | ⭐ 简单 | [绿色版安装指南](https://mp.weixin.qq.com/s/eoo_HeIGxaQZVT76LBbRJQ) |
-| 🐳 **Docker版** | 生产环境、跨平台 | ⭐⭐ 中等 | [Docker 部署指南](https://mp.weixin.qq.com/s/JkA0cOu8xJnoY_3LC5oXNw) |
-| 💻 **本地代码版** | 开发者、定制需求 | ⭐⭐⭐ 较难 | [本地安装指南](https://mp.weixin.qq.com/s/cqUGf-sAzcBV19gdI4sYfA) |
+```bash
+docker compose up -d --build
+```
+
+没有源码变化时执行：
+
+```bash
+docker compose up -d
+```
+
+本地访问地址为 `http://localhost:3000`，后端接口为 `http://localhost:8000`。
+
+> `docs/` 中提到 `docker-compose.hub.nginx*.yml` 的文章属于原作者 v1 历史资料，不适用于当前 `pro/main` 二次开发版本。
 
 ⚠️ **重要提醒**：
 - 在分析股票之前，请按相关文档要求，将股票数据同步完成，否则分析结果将会出现数据错误
@@ -102,9 +111,9 @@
 
 
 
-#### 📚 使用指南
+#### 📚 原作者 v1 历史资料
 
-在使用前，建议先阅读详细的使用指南：
+以下链接不代表当前 `pro/main` 二次开发版的 Docker 启动方式。涉及 Docker Hub 或 `docker-compose.hub.nginx*.yml` 的命令请勿用于本分支：
 
 - **[1、📘 TradingAgents-CN v1.0.0-preview 使用指南](https://mp.weixin.qq.com/s/ppsYiBncynxlsfKFG8uEbw)**
 - **[2、📘 使用 Docker Compose 部署TradingAgents-CN v1.0.0-preview（完全版）](https://mp.weixin.qq.com/s/JkA0cOu8xJnoY_3LC5oXNw)**
